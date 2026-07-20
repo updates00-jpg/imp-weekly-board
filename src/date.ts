@@ -35,3 +35,22 @@ export function formatLongDay(date: Date): string {
     month: 'long',
   }).format(date)
 }
+
+export function isSameDay(left: Date, right: Date): boolean {
+  return toIsoDate(left) === toIsoDate(right)
+}
+
+export function formatWeekRange(start: Date, end: Date): string {
+  const sameYear = start.getFullYear() === end.getFullYear()
+  const sameMonth = sameYear && start.getMonth() === end.getMonth()
+  const day = new Intl.DateTimeFormat('en-GB', { day: 'numeric' })
+  const month = new Intl.DateTimeFormat('en-GB', { month: 'short' })
+
+  if (sameMonth) {
+    return `${day.format(start)}–${day.format(end)} ${month.format(end)} ${end.getFullYear()}`
+  }
+  if (sameYear) {
+    return `${day.format(start)} ${month.format(start)} – ${day.format(end)} ${month.format(end)} ${end.getFullYear()}`
+  }
+  return `${day.format(start)} ${month.format(start)} ${start.getFullYear()} – ${day.format(end)} ${month.format(end)} ${end.getFullYear()}`
+}

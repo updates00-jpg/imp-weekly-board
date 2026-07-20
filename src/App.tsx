@@ -15,7 +15,7 @@ import {
 import type { Session } from '@supabase/supabase-js'
 import { supabase, usernameToEmail } from './supabase'
 import type { Profile, Task, TaskFormData, TaskPriority, TaskStatus } from './types'
-import { addDays, formatDay, formatLongDay, startOfWeek, toIsoDate } from './date'
+import { addDays, formatDay, formatLongDay, formatWeekRange, isSameDay, startOfWeek, toIsoDate } from './date'
 
 const USERS = Array.from({ length: 15 }, (_, index) => `IMP-${index + 1}`)
 const EMPTY_FORM: TaskFormData = {
@@ -129,6 +129,31 @@ function App() {
       setMessage(error.message || 'Could not load data.')
     })
   }, [session, loadCurrentProfile, loadProfiles, loadTasks])
+
+  useEffect(() => {
+    if (!session) return
+
+    const syncToCurrentDate = () => {
+      const today = new Date()
+      setSelectedDate((current) => isSameDay(current, today) ? current : today)
+      loadTasks().catch((error) => setMessage(error.message || 'Could not refresh tasks.'))
+    }
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') syncToCurrentDate()
+    }
+
+    window.addEventListener('focus', syncToCurrentDate)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    const dateCheckTimer = window.setInterval(syncToCurrentDate, 60_000)
+
+    return () => {
+      window.removeEventListener('focus', syncToCurrentDate)
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.clearInterval(dateCheckTimer)
+    }
+  }, [session, loadTasks])
 
   useEffect(() => {
     if (!session) return
@@ -276,7 +301,7 @@ function App() {
       <header className="topbar">
         <div>
           <div className="eyebrow">IMP WEEKLY BOARD</div>
-          <h1>{view === 'day' ? formatLongDay(selectedDate) : view === 'week' ? 'This Week' : 'My Tasks'}</h1>
+          <h1>{view === 'day' ? formatLongDay(selectedDate) : view === 'week' ? formatWeekRange(weekStart, weekEnd) : 'My Tasks'}</h1>
         </div>
         <button className="icon-button" onClick={() => supabase.auth.signOut()} aria-label="Sign out">
           <LogOut size={20} />
@@ -314,9 +339,9 @@ function App() {
               const date = addDays(weekStart, index)
               const items = tasks.filter((task) => task.task_date === toIsoDate(date))
               return (
-                <section className="day-section" key={toIsoDate(date)}>
+                <section className={`day-section ${isSameDay(date, new Date()) ? 'is-today' : ''}`} key={toIsoDate(date)}>
                   <button className="day-heading" onClick={() => { setSelectedDate(date); setView('day') }}>
-                    <span>{formatDay(date)}</span>
+                    <span>{formatDay(date)}{isSameDay(date, new Date()) && <em>Today</em>}</span>
                     <strong>{items.length}</strong>
                   </button>
                   <TaskList tasks={items} compact onEdit={openEdit} onStatus={quickStatus} onDelete={removeTask} />
