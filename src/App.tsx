@@ -5,6 +5,9 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  ClipboardList,
+  Clock3,
+  UsersRound,
   LogOut,
   Plus,
   Pencil,
@@ -59,6 +62,7 @@ function App() {
   const [editing, setEditing] = useState<Task | null>(null)
   const [form, setForm] = useState<TaskFormData>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [adminTasks, setAdminTasks] = useState<Task[]>([])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -94,6 +98,43 @@ function App() {
 
   const weekStart = useMemo(() => startOfWeek(selectedDate), [selectedDate])
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart])
+
+  const loadAdminTasks = useCallback(async () => {
+    if (!session || profile?.role !== 'admin') {
+      setAdminTasks([])
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .select(`
+        id,
+        title,
+        description,
+        task_date,
+        start_time,
+        end_time,
+        status,
+        priority,
+        owner_id,
+        created_by,
+        created_at,
+        updated_at,
+        deleted_at,
+        owner:profiles!tasks_owner_id_fkey(id, username, role, active),
+        task_assignees(profile:profiles(id, username, role, active))
+      `)
+      .is('deleted_at', null)
+      .order('task_date')
+
+    if (error) throw error
+
+    const mapped = (data || []).map((row: any) => ({
+      ...row,
+      assignees: (row.task_assignees || []).map((item: any) => item.profile).filter(Boolean),
+    }))
+    setAdminTasks(mapped as Task[])
+  }, [session, profile?.role])
 
   const loadTasks = useCallback(async () => {
     if (!session) return
@@ -131,6 +172,15 @@ function App() {
     })
   }, [session, loadCurrentProfile, loadProfiles, loadTasks])
 
+
+  useEffect(() => {
+    if (profile?.role !== 'admin') {
+      setAdminTasks([])
+      return
+    }
+    loadAdminTasks().catch((error) => setMessage(error.message || 'Could not load admin summary.'))
+  }, [profile?.role, loadAdminTasks])
+
   useEffect(() => {
     if (!session) return
 
@@ -160,13 +210,19 @@ function App() {
     if (!session) return
     const channel = supabase
       .channel('weekly-board')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, loadTasks)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_assignees' }, loadTasks)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
+        loadTasks()
+        if (profile?.role === 'admin') loadAdminTasks()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_assignees' }, () => {
+        loadTasks()
+        if (profile?.role === 'admin') loadAdminTasks()
+      })
       .subscribe()
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [session, loadTasks])
+  }, [session, profile?.role, loadTasks, loadAdminTasks])
 
   function openNew(date = selectedDate) {
     setEditing(null)
@@ -296,6 +352,13 @@ function App() {
   const mine = tasks.filter(
     (task) => task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id),
   )
+  const todayIso = toIsoDate(new Date())
+  const adminStats = profile?.role === 'admin' ? {
+    active: adminTasks.filter((task) => !['completed', 'cancelled'].includes(task.status)).length,
+    completedToday: adminTasks.filter((task) => task.status === 'completed' && task.task_date === todayIso).length,
+    overdue: adminTasks.filter((task) => !['completed', 'cancelled'].includes(task.status) && task.task_date < todayIso).length,
+    thisWeek: tasks.length,
+  } : null
 
   return (
     <div className="app-shell">
@@ -327,6 +390,14 @@ function App() {
             <ChevronRight />
           </button>
         </div>
+      )}
+
+      {adminStats && (
+        <AdminDashboard
+          stats={adminStats}
+          profiles={profiles}
+          weekTasks={tasks}
+        />
       )}
 
       <main>
@@ -384,6 +455,70 @@ function App() {
         />
       )}
     </div>
+  )
+}
+
+function AdminDashboard({
+  stats,
+  profiles,
+  weekTasks,
+}: {
+  stats: { active: number; completedToday: number; overdue: number; thisWeek: number }
+  profiles: Profile[]
+  weekTasks: Task[]
+}) {
+  const tasksPerEmployee = profiles
+    .map((person) => ({
+      username: person.username,
+      count: weekTasks.filter(
+        (task) => task.owner_id === person.id || task.assignees?.some((assignee) => assignee.id === person.id),
+      ).length,
+    }))
+    .filter((person) => person.count > 0)
+    .sort((a, b) => b.count - a.count || a.username.localeCompare(b.username))
+
+  return (
+    <section className="admin-dashboard" aria-label="Administrator summary">
+      <div className="dashboard-heading">
+        <div>
+          <span>ADMIN SUMMARY</span>
+          <h2>Team overview</h2>
+        </div>
+        <UsersRound size={22} />
+      </div>
+      <div className="stats-grid">
+        <div className="stat-card">
+          <ClipboardList size={19} />
+          <strong>{stats.active}</strong>
+          <span>Active</span>
+        </div>
+        <div className="stat-card">
+          <Check size={19} />
+          <strong>{stats.completedToday}</strong>
+          <span>Done today</span>
+        </div>
+        <div className={`stat-card ${stats.overdue ? 'stat-warning' : ''}`}>
+          <Clock3 size={19} />
+          <strong>{stats.overdue}</strong>
+          <span>Overdue</span>
+        </div>
+        <div className="stat-card">
+          <CalendarDays size={19} />
+          <strong>{stats.thisWeek}</strong>
+          <span>This week</span>
+        </div>
+      </div>
+      <div className="employee-summary">
+        <span>Tasks per employee · this week</span>
+        <div className="employee-chips">
+          {tasksPerEmployee.length ? tasksPerEmployee.map((person) => (
+            <span className="employee-chip" key={person.username}>
+              {person.username}<strong>{person.count}</strong>
+            </span>
+          )) : <em>No assigned tasks this week.</em>}
+        </div>
+      </div>
+    </section>
   )
 }
 
