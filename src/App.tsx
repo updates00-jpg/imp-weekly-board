@@ -57,6 +57,7 @@ function App() {
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Task | null>(null)
   const [form, setForm] = useState<TaskFormData>(EMPTY_FORM)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -170,7 +171,7 @@ function App() {
 
   async function saveTask(event: FormEvent) {
     event.preventDefault()
-    if (!profile) return
+    if (!profile || saving) return
     setMessage('')
     if (!form.title.trim()) {
       setMessage('Title is required.')
@@ -180,6 +181,8 @@ function App() {
       setMessage('End time must be later than start time.')
       return
     }
+
+    setSaving(true)
 
     const payload = {
       title: form.title.trim(),
@@ -192,58 +195,72 @@ function App() {
       owner_id: form.owner_id || null,
     }
 
-    let taskId = editing?.id
-    if (editing) {
-      const { error } = await supabase.from('tasks').update(payload).eq('id', editing.id)
-      if (error) {
-        setMessage(error.message)
-        return
+    try {
+      let taskId = editing?.id
+      if (editing) {
+        const { error } = await supabase.from('tasks').update(payload).eq('id', editing.id)
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase
+          .from('tasks')
+          .insert({ ...payload, created_by: profile.id })
+          .select('id')
+          .single()
+        if (error) throw error
+        taskId = data.id
       }
-    } else {
-      const { data, error } = await supabase
-        .from('tasks')
-        .insert({ ...payload, created_by: profile.id })
-        .select('id')
-        .single()
-      if (error) {
-        setMessage(error.message)
-        return
-      }
-      taskId = data.id
-    }
 
-    if (!taskId) return
-    const { error: deleteError } = await supabase.from('task_assignees').delete().eq('task_id', taskId)
-    if (deleteError) {
-      setMessage(deleteError.message)
-      return
-    }
-    if (form.assignee_ids.length) {
-      const { error: insertError } = await supabase.from('task_assignees').insert(
-        form.assignee_ids.map((profileId) => ({ task_id: taskId, profile_id: profileId })),
-      )
-      if (insertError) {
-        setMessage(insertError.message)
-        return
-      }
-    }
+      if (!taskId) throw new Error('Task could not be saved.')
+      const { error: deleteError } = await supabase.from('task_assignees').delete().eq('task_id', taskId)
+      if (deleteError) throw deleteError
 
-    setFormOpen(false)
-    await loadTasks()
+      if (form.assignee_ids.length) {
+        const { error: insertError } = await supabase.from('task_assignees').insert(
+          form.assignee_ids.map((profileId) => ({ task_id: taskId, profile_id: profileId })),
+        )
+        if (insertError) throw insertError
+      }
+
+      await loadTasks()
+      setFormOpen(false)
+      setMessage(editing ? 'Task updated.' : 'Task created.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Task could not be saved.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function quickStatus(task: Task, status: TaskStatus) {
+    const previousStatus = task.status
+    setTasks((current) => current.map((item) => item.id === task.id ? { ...item, status } : item))
+
     const { error } = await supabase.from('tasks').update({ status }).eq('id', task.id)
-    if (error) setMessage(error.message)
+    if (error) {
+      setTasks((current) => current.map((item) => item.id === task.id ? { ...item, status: previousStatus } : item))
+      setMessage(error.message)
+      return
+    }
+    setMessage('Task updated.')
   }
 
   async function removeTask(task: Task) {
     if (!window.confirm(`Move "${task.title}" to trash?`)) return
+
+    // Optimistic update: remove the card immediately instead of waiting for Realtime/refetch.
+    setTasks((current) => current.filter((item) => item.id !== task.id))
+
     const { error } = await supabase
       .from('tasks')
       .update({ deleted_at: new Date().toISOString(), deleted_by: profile?.id })
       .eq('id', task.id)
-    if (error) setMessage(error.message)
+
+    if (error) {
+      await loadTasks()
+      setMessage(error.message)
+      return
+    }
+    setMessage('Task moved to trash.')
   }
 
   if (loading) return <div className="splash">Loading…</div>
@@ -337,6 +354,7 @@ function App() {
           editing={editing}
           onClose={() => setFormOpen(false)}
           onSubmit={saveTask}
+          saving={saving}
         />
       )}
     </div>
@@ -344,7 +362,7 @@ function App() {
 }
 
 function Login({ users }: { users: string[] }) {
-  const [username, setUsername] = useState('IMP-1')
+  const [username, setUsername] = useState(() => localStorage.getItem('imp-last-user') || 'IMP-1')
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -357,7 +375,11 @@ function Login({ users }: { users: string[] }) {
       email: usernameToEmail(username),
       password: pin,
     })
-    if (loginError) setError('Incorrect user or PIN.')
+    if (loginError) {
+      setError('Incorrect user or PIN.')
+    } else {
+      localStorage.setItem('imp-last-user', username)
+    }
     setBusy(false)
   }
 
@@ -451,6 +473,7 @@ function TaskModal({
   editing,
   onClose,
   onSubmit,
+  saving,
 }: {
   form: TaskFormData
   setForm: (next: TaskFormData) => void
@@ -458,6 +481,7 @@ function TaskModal({
   editing: Task | null
   onClose: () => void
   onSubmit: (event: FormEvent) => void
+  saving: boolean
 }) {
   function toggleAssignee(id: string) {
     const included = form.assignee_ids.includes(id)
@@ -550,8 +574,8 @@ function TaskModal({
         </fieldset>
 
         <footer>
-          <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
-          <button className="primary-button">{editing ? 'Save Changes' : 'Create Task'}</button>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="primary-button" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Task'}</button>
         </footer>
       </form>
     </div>
