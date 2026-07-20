@@ -1,0 +1,40 @@
+export type TaskStatus = 'scheduled' | 'in_progress' | 'completed' | 'blocked' | 'cancelled'
+export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent'
+export type UserRole = 'member' | 'admin'
+
+export interface Profile {
+  id: string
+  username: string
+  role: UserRole
+  active: boolean
+}
+
+export interface Task {
+  id: string
+  title: string
+  description: string | null
+  task_date: string
+  start_time: string | null
+  end_time: string | null
+  status: TaskStatus
+  priority: TaskPriority
+  owner_id: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+  owner?: Profile | null
+  assignees?: Profile[]
+}
+
+export interface TaskFormData {
+  title: string
+  description: string
+  task_date: string
+  start_time: string
+  end_time: string
+  status: TaskStatus
+  priority: TaskPriority
+  owner_id: string
+  assignee_ids: string[]
+}
