@@ -12,6 +12,8 @@ import {
   Plus,
   Pencil,
   RefreshCw,
+  Search,
+  ArchiveRestore,
   Trash2,
   UserRound,
   X,
@@ -63,6 +65,10 @@ function App() {
   const [form, setForm] = useState<TaskFormData>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [adminTasks, setAdminTasks] = useState<Task[]>([])
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>([])
+  const [archiveOpen, setArchiveOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filter, setFilter] = useState<'all' | 'mine' | 'today' | 'overdue' | 'done'>('all')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -136,6 +142,30 @@ function App() {
     setAdminTasks(mapped as Task[])
   }, [session, profile?.role])
 
+  const loadArchivedTasks = useCallback(async () => {
+    if (!session || profile?.role !== 'admin') {
+      setArchivedTasks([])
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .select(`
+        *,
+        owner:profiles!tasks_owner_id_fkey(id, username, role, active),
+        task_assignees(profile:profiles(id, username, role, active))
+      `)
+      .not('deleted_at', 'is', null)
+      .order('deleted_at', { ascending: false })
+
+    if (error) throw error
+    const mapped = (data || []).map((row: any) => ({
+      ...row,
+      assignees: (row.task_assignees || []).map((item: any) => item.profile).filter(Boolean),
+    }))
+    setArchivedTasks(mapped as Task[])
+  }, [session, profile?.role])
+
   const loadTasks = useCallback(async () => {
     if (!session) return
     const from = toIsoDate(weekStart)
@@ -178,8 +208,8 @@ function App() {
       setAdminTasks([])
       return
     }
-    loadAdminTasks().catch((error) => setMessage(error.message || 'Could not load admin summary.'))
-  }, [profile?.role, loadAdminTasks])
+    Promise.all([loadAdminTasks(), loadArchivedTasks()]).catch((error) => setMessage(error.message || 'Could not load admin data.'))
+  }, [profile?.role, loadAdminTasks, loadArchivedTasks])
 
   useEffect(() => {
     if (!session) return
@@ -212,17 +242,17 @@ function App() {
       .channel('weekly-board')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
         loadTasks()
-        if (profile?.role === 'admin') loadAdminTasks()
+        if (profile?.role === 'admin') { loadAdminTasks(); loadArchivedTasks() }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_assignees' }, () => {
         loadTasks()
-        if (profile?.role === 'admin') loadAdminTasks()
+        if (profile?.role === 'admin') { loadAdminTasks(); loadArchivedTasks() }
       })
       .subscribe()
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [session, profile?.role, loadTasks, loadAdminTasks])
+  }, [session, profile?.role, loadTasks, loadAdminTasks, loadArchivedTasks])
 
   function openNew(date = selectedDate) {
     setEditing(null)
@@ -345,14 +375,55 @@ function App() {
     setMessage('Task moved to trash.')
   }
 
+  async function restoreTask(task: Task) {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ deleted_at: null, deleted_by: null })
+      .eq('id', task.id)
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+    setArchivedTasks((current) => current.filter((item) => item.id !== task.id))
+    await Promise.all([loadTasks(), loadAdminTasks()])
+    setMessage('Task restored.')
+  }
+
+  async function permanentlyDeleteTask(task: Task) {
+    if (!window.confirm(`Permanently delete "${task.title}"? This cannot be undone.`)) return
+    const { error } = await supabase.from('tasks').delete().eq('id', task.id)
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+    setArchivedTasks((current) => current.filter((item) => item.id !== task.id))
+    setMessage('Task permanently deleted.')
+  }
+
   if (loading) return <div className="splash">Loading…</div>
   if (!session) return <Login users={USERS} />
 
-  const dayTasks = tasks.filter((task) => task.task_date === toIsoDate(selectedDate))
-  const mine = tasks.filter(
+  const todayIso = toIsoDate(new Date())
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const filteredTasks = tasks.filter((task) => {
+    const matchesSearch = !normalizedQuery || [
+      task.title,
+      task.description || '',
+      task.owner?.username || '',
+      ...(task.assignees?.map((item) => item.username) || []),
+    ].some((value) => value.toLowerCase().includes(normalizedQuery))
+
+    if (!matchesSearch) return false
+    if (filter === 'mine') return task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id)
+    if (filter === 'today') return task.task_date === todayIso
+    if (filter === 'overdue') return !['completed', 'cancelled'].includes(task.status) && task.task_date < todayIso
+    if (filter === 'done') return task.status === 'completed'
+    return true
+  })
+  const dayTasks = filteredTasks.filter((task) => task.task_date === toIsoDate(selectedDate))
+  const mine = filteredTasks.filter(
     (task) => task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id),
   )
-  const todayIso = toIsoDate(new Date())
   const adminStats = profile?.role === 'admin' ? {
     active: adminTasks.filter((task) => !['completed', 'cancelled'].includes(task.status)).length,
     completedToday: adminTasks.filter((task) => task.status === 'completed' && task.task_date === todayIso).length,
@@ -400,6 +471,35 @@ function App() {
         />
       )}
 
+      <section className="task-tools" aria-label="Task filters">
+        <label className="search-box">
+          <Search size={18} />
+          <input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search tasks..."
+            aria-label="Search tasks"
+          />
+          {searchQuery && <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search"><X size={16} /></button>}
+        </label>
+        <div className="filter-chips">
+          {([
+            ['all', 'All'],
+            ['mine', 'Mine'],
+            ['today', 'Today'],
+            ['overdue', 'Overdue'],
+            ['done', 'Done'],
+          ] as const).map(([value, label]) => (
+            <button key={value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{label}</button>
+          ))}
+          {profile?.role === 'admin' && (
+            <button className="archive-button" onClick={() => setArchiveOpen(true)}>
+              <ArchiveRestore size={15} /> Archive {archivedTasks.length ? `(${archivedTasks.length})` : ''}
+            </button>
+          )}
+        </div>
+      </section>
+
       <main>
         {view === 'day' && (
           <TaskList tasks={dayTasks} onEdit={openEdit} onStatus={quickStatus} onDelete={removeTask} />
@@ -409,7 +509,7 @@ function App() {
           <div className="week-strip">
             {Array.from({ length: 7 }, (_, index) => {
               const date = addDays(weekStart, index)
-              const items = tasks.filter((task) => task.task_date === toIsoDate(date))
+              const items = filteredTasks.filter((task) => task.task_date === toIsoDate(date))
               return (
                 <section className={`day-section ${isSameDay(date, new Date()) ? 'is-today' : ''}`} key={toIsoDate(date)}>
                   <button className="day-heading" onClick={() => { setSelectedDate(date); setView('day') }}>
@@ -442,6 +542,15 @@ function App() {
           <UserRound size={20} /><span>My Tasks</span>
         </button>
       </nav>
+
+      {archiveOpen && (
+        <ArchiveModal
+          tasks={archivedTasks}
+          onClose={() => setArchiveOpen(false)}
+          onRestore={restoreTask}
+          onDelete={permanentlyDeleteTask}
+        />
+      )}
 
       {formOpen && (
         <TaskModal
@@ -624,6 +733,46 @@ function TaskList({
           </div>
         </article>
       ))}
+    </div>
+  )
+}
+
+function ArchiveModal({
+  tasks,
+  onClose,
+  onRestore,
+  onDelete,
+}: {
+  tasks: Task[]
+  onClose: () => void
+  onRestore: (task: Task) => void
+  onDelete: (task: Task) => void
+}) {
+  return (
+    <div className="modal-backdrop">
+      <section className="task-modal archive-modal" role="dialog" aria-modal="true" aria-label="Task archive">
+        <header>
+          <div>
+            <h2>Task Archive</h2>
+            <p>Deleted tasks can be restored or removed permanently.</p>
+          </div>
+          <button type="button" onClick={onClose}><X /></button>
+        </header>
+        <div className="archive-list">
+          {tasks.length ? tasks.map((task) => (
+            <article className="archive-item" key={task.id}>
+              <div>
+                <strong>{task.title}</strong>
+                <span>{task.task_date} · {task.owner?.username || 'No owner'}</span>
+              </div>
+              <div className="archive-actions">
+                <button className="restore-button" onClick={() => onRestore(task)}><ArchiveRestore size={16} /> Restore</button>
+                <button className="delete-forever" onClick={() => onDelete(task)}><Trash2 size={16} /> Delete</button>
+              </div>
+            </article>
+          )) : <div className="empty-state">Archive is empty.</div>}
+        </div>
+      </section>
     </div>
   )
 }
