@@ -56,6 +56,7 @@ function App() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [personalTasks, setPersonalTasks] = useState<Task[]>([])
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [view, setView] = useState<'day' | 'week' | 'mine'>('day')
   const [loading, setLoading] = useState(true)
@@ -104,6 +105,31 @@ function App() {
 
   const weekStart = useMemo(() => startOfWeek(selectedDate), [selectedDate])
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart])
+
+  const loadPersonalTasks = useCallback(async () => {
+    if (!session) {
+      setPersonalTasks([])
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .select(`
+        *,
+        owner:profiles!tasks_owner_id_fkey(id, username, role, active),
+        task_assignees(profile:profiles(id, username, role, active))
+      `)
+      .is('deleted_at', null)
+      .order('task_date')
+      .order('start_time', { nullsFirst: true })
+
+    if (error) throw error
+    const mapped = (data || []).map((row: any) => ({
+      ...row,
+      assignees: (row.task_assignees || []).map((item: any) => item.profile).filter(Boolean),
+    }))
+    setPersonalTasks(mapped as Task[])
+  }, [session])
 
   const loadAdminTasks = useCallback(async () => {
     if (!session || profile?.role !== 'admin') {
@@ -197,10 +223,10 @@ function App() {
       setTasks([])
       return
     }
-    Promise.all([loadCurrentProfile(), loadProfiles(), loadTasks()]).catch((error) => {
+    Promise.all([loadCurrentProfile(), loadProfiles(), loadTasks(), loadPersonalTasks()]).catch((error) => {
       setMessage(error.message || 'Could not load data.')
     })
-  }, [session, loadCurrentProfile, loadProfiles, loadTasks])
+  }, [session, loadCurrentProfile, loadProfiles, loadTasks, loadPersonalTasks])
 
 
   useEffect(() => {
@@ -217,7 +243,7 @@ function App() {
     const syncToCurrentDate = () => {
       const today = new Date()
       setSelectedDate((current) => isSameDay(current, today) ? current : today)
-      loadTasks().catch((error) => setMessage(error.message || 'Could not refresh tasks.'))
+      Promise.all([loadTasks(), loadPersonalTasks()]).catch((error) => setMessage(error.message || 'Could not refresh tasks.'))
     }
 
     const handleVisibility = () => {
@@ -234,7 +260,7 @@ function App() {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.clearInterval(dateCheckTimer)
     }
-  }, [session, loadTasks])
+  }, [session, loadTasks, loadPersonalTasks])
 
   useEffect(() => {
     if (!session) return
@@ -242,17 +268,19 @@ function App() {
       .channel('weekly-board')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
         loadTasks()
+        loadPersonalTasks()
         if (profile?.role === 'admin') { loadAdminTasks(); loadArchivedTasks() }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_assignees' }, () => {
         loadTasks()
+        loadPersonalTasks()
         if (profile?.role === 'admin') { loadAdminTasks(); loadArchivedTasks() }
       })
       .subscribe()
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [session, profile?.role, loadTasks, loadAdminTasks, loadArchivedTasks])
+  }, [session, profile?.role, loadTasks, loadPersonalTasks, loadAdminTasks, loadArchivedTasks])
 
   function openNew(date = selectedDate) {
     setEditing(null)
@@ -424,6 +452,17 @@ function App() {
   const mine = filteredTasks.filter(
     (task) => task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id),
   )
+  const myVisibleTasks = personalTasks.filter(
+    (task) => task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id),
+  )
+  const myDayStats = {
+    today: myVisibleTasks.filter((task) => task.task_date === todayIso && !['completed', 'cancelled'].includes(task.status)).length,
+    overdue: myVisibleTasks.filter((task) => task.task_date < todayIso && !['completed', 'cancelled'].includes(task.status)).length,
+    completedToday: myVisibleTasks.filter((task) => task.task_date === todayIso && task.status === 'completed').length,
+    nextTask: myVisibleTasks
+      .filter((task) => task.task_date >= todayIso && !['completed', 'cancelled'].includes(task.status))
+      .sort((a, b) => `${a.task_date} ${a.start_time || '23:59'}`.localeCompare(`${b.task_date} ${b.start_time || '23:59'}`))[0] || null,
+  }
   const adminStats = profile?.role === 'admin' ? {
     active: adminTasks.filter((task) => !['completed', 'cancelled'].includes(task.status)).length,
     completedToday: adminTasks.filter((task) => task.status === 'completed' && task.task_date === todayIso).length,
@@ -462,6 +501,8 @@ function App() {
           </button>
         </div>
       )}
+
+      {profile && <MyDayDashboard username={profile.username} stats={myDayStats} />}
 
       {adminStats && (
         <AdminDashboard
@@ -564,6 +605,55 @@ function App() {
         />
       )}
     </div>
+  )
+}
+
+function MyDayDashboard({
+  username,
+  stats,
+}: {
+  username: string
+  stats: { today: number; overdue: number; completedToday: number; nextTask: Task | null }
+}) {
+  const nextLabel = stats.nextTask
+    ? `${stats.nextTask.task_date === toIsoDate(new Date()) ? 'Today' : stats.nextTask.task_date}${stats.nextTask.start_time ? ` · ${stats.nextTask.start_time.slice(0, 5)}` : ''}`
+    : 'No upcoming tasks'
+
+  return (
+    <section className="my-day-dashboard" aria-label="My day summary">
+      <div className="dashboard-heading">
+        <div>
+          <span>MY DAY</span>
+          <h2>Hello, {username}</h2>
+        </div>
+        <CalendarDays size={22} />
+      </div>
+      <div className="my-day-grid">
+        <div className="my-day-stat">
+          <CalendarDays size={18} />
+          <strong>{stats.today}</strong>
+          <span>Today</span>
+        </div>
+        <div className={`my-day-stat ${stats.overdue ? 'stat-warning' : ''}`}>
+          <Clock3 size={18} />
+          <strong>{stats.overdue}</strong>
+          <span>Overdue</span>
+        </div>
+        <div className="my-day-stat">
+          <Check size={18} />
+          <strong>{stats.completedToday}</strong>
+          <span>Done today</span>
+        </div>
+      </div>
+      <div className="next-task-card">
+        <div>
+          <span>NEXT TASK</span>
+          <strong>{stats.nextTask?.title || 'You are clear'}</strong>
+          <small>{nextLabel}</small>
+        </div>
+        <ChevronRight size={20} />
+      </div>
+    </section>
   )
 }
 
