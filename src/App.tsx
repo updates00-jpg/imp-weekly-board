@@ -7,6 +7,7 @@ import {
   CircleAlert,
   LogOut,
   Plus,
+  Pencil,
   RefreshCw,
   Trash2,
   UserRound,
@@ -248,7 +249,7 @@ function App() {
 
       await loadTasks()
       setFormOpen(false)
-      setMessage(editing ? 'Task updated.' : 'Task created.')
+      setMessage(editing ? 'Task changes saved.' : 'Task created.')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Task could not be saved.')
     } finally {
@@ -475,6 +476,7 @@ function TaskList({
             </div>
           </button>
           <div className="quick-actions">
+            <button onClick={() => onEdit(task)} aria-label={`Edit ${task.title}`}><Pencil size={15} /> Edit</button>
             {task.status !== 'in_progress' && task.status !== 'completed' && (
               <button onClick={() => onStatus(task, 'in_progress')}>Start</button>
             )}

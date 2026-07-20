@@ -118,3 +118,8 @@ Nowy PIN musi mieć dokładnie 6 cyfr.
 - `sb_publishable_...` jest przeznaczony do aplikacji klienckiej; dostęp do danych ograniczają polityki RLS.
 - `sb_secret_...` ma dostęp uprzywilejowany. Nie zapisuj go w `.env` używanym przez Vite, repozytorium ani GitHub Pages.
 - Frontend nigdy nie otrzymuje klucza secret.
+
+
+## Version 2.0
+
+Tasks can be edited by tapping the task card or the explicit **Edit** button. The edit form supports title, description, date, times, owner, status, priority, and assigned users. Changes are saved to Supabase and synchronized through Realtime.

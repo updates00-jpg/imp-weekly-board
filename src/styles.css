@@ -213,3 +213,16 @@ legend { font-weight: 900; padding: 0 7px; }
   background: #2563eb;
   color: #fff;
 }
+
+
+/* v2.0: explicit task editing */
+.task-main { cursor: pointer; }
+.task-main:focus-visible, .quick-actions button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .35);
+  outline-offset: -2px;
+}
+.quick-actions button:first-child {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.task-modal footer .primary-button { width: 100%; }
