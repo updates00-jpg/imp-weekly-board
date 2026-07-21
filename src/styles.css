@@ -152,7 +152,7 @@ main { padding: 10px 16px; }
   width: min(100%, 600px); height: calc(68px + env(safe-area-inset-bottom));
   padding: 7px 24px env(safe-area-inset-bottom);
   background: rgba(255,255,255,.96); backdrop-filter: blur(18px); border-top: 1px solid #e5e7eb;
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
 }
 .bottom-nav button {
   border: 0; background: transparent; color: #64748b; display: grid; justify-items: center;
@@ -175,7 +175,7 @@ main { padding: 10px 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 fieldset { border: 1px solid #e5e7eb; border-radius: 14px; padding: 12px; margin: 2px 0 18px; }
 legend { font-weight: 900; padding: 0 7px; }
-.assignee-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.assignee-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .check-label { margin: 0; display: flex; align-items: center; gap: 7px; padding: 8px; background: #f8fafc; border-radius: 9px; }
 .check-label input { width: 18px; height: 18px; margin: 0; }
 .task-modal footer { display: grid; grid-template-columns: 1fr 1.5fr; gap: 10px; }
@@ -333,7 +333,7 @@ legend { font-weight: 900; padding: 0 7px; }
   background: white;
   box-shadow: 0 5px 18px rgba(15,23,42,.06);
 }
-.my-day-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.my-day-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .my-day-stat {
   min-width: 0;
   display: grid;
@@ -373,3 +373,21 @@ legend { font-weight: 900; padding: 0 7px; }
 .leave-card div { display: grid; gap: 2px; }
 .leave-card span { font-size: .8rem; opacity: .8; }
 .next-day-check { align-self: end; min-height: 48px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+
+
+.leave-page { display: grid; gap: 18px; padding-bottom: 90px; }
+.leave-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.leave-page-header h2 { margin: 0 0 4px; }
+.leave-page-header p { margin: 0; color: #64748b; font-size: .9rem; }
+.leave-add-button { width: auto; min-height: 42px; padding: 0 14px; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.leave-section { display: grid; gap: 10px; }
+.leave-section h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: .95rem; }
+.leave-section h3 span { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: #e2e8f0; text-align: center; font-size: .75rem; }
+.leave-page .leave-card { padding: 14px; }
+.leave-page .leave-card span { display: block; }
+@media (max-width: 420px) {
+  .bottom-nav { padding-left: 8px; padding-right: 8px; }
+  .bottom-nav button { font-size: .66rem; }
+  .leave-page-header { align-items: stretch; flex-direction: column; }
+  .leave-add-button { justify-content: center; }
+}

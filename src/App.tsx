@@ -64,7 +64,7 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [personalTasks, setPersonalTasks] = useState<Task[]>([])
   const [selectedDate, setSelectedDate] = useState(new Date())
-  const [view, setView] = useState<'day' | 'week' | 'mine'>('day')
+  const [view, setView] = useState<'day' | 'week' | 'mine' | 'leave'>('day')
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [formOpen, setFormOpen] = useState(false)
@@ -534,7 +534,7 @@ function App() {
       <header className="topbar">
         <div>
           <div className="eyebrow">IMP WEEKLY BOARD</div>
-          <h1>{view === 'day' ? formatLongDay(selectedDate) : view === 'week' ? formatWeekRange(weekStart, weekEnd) : 'My Tasks'}</h1>
+          <h1>{view === 'day' ? formatLongDay(selectedDate) : view === 'week' ? formatWeekRange(weekStart, weekEnd) : view === 'mine' ? 'My Tasks' : 'Leave'}</h1>
         </div>
         <button className="icon-button" onClick={() => supabase.auth.signOut()} aria-label="Sign out">
           <LogOut size={20} />
@@ -549,7 +549,7 @@ function App() {
         </div>
       )}
 
-      {view !== 'mine' && (
+      {(view === 'day' || view === 'week') && (
         <div className="date-nav">
           <button onClick={() => setSelectedDate(addDays(selectedDate, view === 'week' ? -7 : -1))}>
             <ChevronLeft />
@@ -561,9 +561,9 @@ function App() {
         </div>
       )}
 
-      {profile && <MyDayDashboard username={profile.username} stats={myDayStats} />}
+      {profile && view !== 'leave' && <MyDayDashboard username={profile.username} stats={myDayStats} />}
 
-      {adminStats && (
+      {adminStats && view !== 'leave' && (
         <AdminDashboard
           stats={adminStats}
           profiles={profiles}
@@ -571,7 +571,7 @@ function App() {
         />
       )}
 
-      <section className="task-tools" aria-label="Task filters">
+      {view !== 'leave' && <section className="task-tools" aria-label="Task filters">
         <label className="search-box">
           <Search size={18} />
           <input
@@ -598,7 +598,7 @@ function App() {
             </button>
           )}
         </div>
-      </section>
+      </section>}
 
       <main>
         {view === 'day' && (<>
@@ -631,9 +631,13 @@ function App() {
         {view === 'mine' && (
           <TaskList tasks={mine} onEdit={openEdit} onStatus={quickStatus} onDelete={removeTask} />
         )}
+
+        {view === 'leave' && (
+          <LeavePage leaves={leavePeriods} onAdd={() => openLeave()} />
+        )}
       </main>
 
-      <div className="fab-stack"><button className="fab leave-fab" onClick={() => openLeave()} aria-label="Add leave"><Palmtree /></button><button className="fab" onClick={() => openNew()} aria-label="Add task"><Plus /></button></div>
+      <div className="fab-stack">{view === 'leave' ? <button className="fab leave-fab" onClick={() => openLeave()} aria-label="Add leave"><Palmtree /></button> : <button className="fab" onClick={() => openNew()} aria-label="Add task"><Plus /></button>}</div>
 
       <nav className="bottom-nav">
         <button className={view === 'day' ? 'active' : ''} onClick={() => setView('day')}>
@@ -644,6 +648,9 @@ function App() {
         </button>
         <button className={view === 'mine' ? 'active' : ''} onClick={() => setView('mine')}>
           <UserRound size={20} /><span>My Tasks</span>
+        </button>
+        <button className={view === 'leave' ? 'active' : ''} onClick={() => setView('leave')}>
+          <Palmtree size={20} /><span>Leave</span>
         </button>
       </nav>
 
@@ -1066,6 +1073,33 @@ function formatTaskTime(task: Task, day?: string) {
   if (day === task.task_date) return start ? `${start} → next day` : 'Starts'
   if (day === task.end_date) return end ? `continued → ${end}` : 'Ends'
   return 'Continues'
+}
+
+function LeavePage({ leaves, onAdd }: { leaves: LeavePeriod[]; onAdd: () => void }) {
+  const today = toIsoDate(new Date())
+  const activeAndUpcoming = [...leaves]
+    .filter((leave) => leave.end_date >= today)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))
+  const past = [...leaves]
+    .filter((leave) => leave.end_date < today)
+    .sort((a, b) => b.end_date.localeCompare(a.end_date))
+
+  return <section className="leave-page">
+    <div className="leave-page-header">
+      <div><h2>Leave</h2><p>Current, upcoming and previous absences.</p></div>
+      <button type="button" className="primary-button leave-add-button" onClick={onAdd}><Plus size={17} /> Add Leave</button>
+    </div>
+
+    <div className="leave-section">
+      <h3>Current & upcoming <span>{activeAndUpcoming.length}</span></h3>
+      {activeAndUpcoming.length ? <LeaveList leaves={activeAndUpcoming} /> : <div className="empty-state">No current or upcoming leave.</div>}
+    </div>
+
+    <div className="leave-section">
+      <h3>Previous <span>{past.length}</span></h3>
+      {past.length ? <LeaveList leaves={past} /> : <div className="empty-state">No previous leave.</div>}
+    </div>
+  </section>
 }
 
 function LeaveList({ leaves, compact = false }: { leaves: LeavePeriod[]; compact?: boolean }) {
