@@ -608,6 +608,18 @@ function App() {
         </button>
       </header>
 
+      <nav className="primary-view-tabs" aria-label="Main planning views">
+        <button className={view === 'mine' ? 'active' : ''} onClick={() => setView('mine')}>
+          <UserRound size={18} /><span>My Tasks</span>
+        </button>
+        <button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}>
+          <LayoutGrid size={18} /><span>Board</span>
+        </button>
+        <button className={view === 'leave' ? 'active' : ''} onClick={() => setView('leave')}>
+          <Palmtree size={18} /><span>Leave</span>
+        </button>
+      </nav>
+
       {message && (
         <div className="notice">
           <CircleAlert size={18} />

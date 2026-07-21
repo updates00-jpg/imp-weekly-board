@@ -77,6 +77,34 @@ small { color: #9ca3af; font-weight: 500; text-align: right; }
 }
 .icon-button { width: 42px; height: 42px; border-radius: 50%; background: #e5e7eb; }
 
+
+.primary-view-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 16px 2px;
+}
+.primary-view-tabs button {
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
+  background: #fff;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-weight: 850;
+  font-size: .82rem;
+}
+.primary-view-tabs button.active {
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+  box-shadow: 0 5px 14px rgba(15,23,42,.16);
+}
+
 .notice {
   display: flex; align-items: center; gap: 9px;
   background: #fef2f2; color: #991b1b;
