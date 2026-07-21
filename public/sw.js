@@ -1,4 +1,4 @@
-const CACHE = 'imp-weekly-board-v2.4.2';
+const CACHE = 'imp-weekly-board-v2.4.3';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => {

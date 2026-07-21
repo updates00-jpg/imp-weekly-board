@@ -77,6 +77,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [leavePeriods, setLeavePeriods] = useState<LeavePeriod[]>([])
   const [leaveOpen, setLeaveOpen] = useState(false)
+  const [editingLeave, setEditingLeave] = useState<LeavePeriod | null>(null)
   const [leaveForm, setLeaveForm] = useState<LeaveFormData>(EMPTY_LEAVE)
   const [filter, setFilter] = useState<'all' | 'mine' | 'today' | 'overdue' | 'done'>('all')
 
@@ -402,7 +403,20 @@ function App() {
 
   function openLeave(date = selectedDate) {
     const iso = toIsoDate(date)
+    setEditingLeave(null)
     setLeaveForm({ ...EMPTY_LEAVE, profile_id: profile?.id || '', start_date: iso, end_date: iso })
+    setLeaveOpen(true)
+  }
+
+  function editLeave(leave: LeavePeriod) {
+    setEditingLeave(leave)
+    setLeaveForm({
+      profile_id: leave.profile_id,
+      leave_type: leave.leave_type,
+      start_date: leave.start_date,
+      end_date: leave.end_date,
+      note: leave.note || '',
+    })
     setLeaveOpen(true)
   }
 
@@ -412,19 +426,38 @@ function App() {
     if (!leaveForm.profile_id) { setMessage('Select an employee.'); return }
     if (leaveForm.end_date < leaveForm.start_date) { setMessage('Leave end date cannot be before start date.'); return }
     setSaving(true)
-    const { error } = await supabase.from('leave_periods').insert({
+    const payload = {
       profile_id: leaveForm.profile_id,
       leave_type: leaveForm.leave_type,
       start_date: leaveForm.start_date,
       end_date: leaveForm.end_date,
       note: leaveForm.note.trim() || null,
-      created_by: profile.id,
-    })
+    }
+    const { error } = editingLeave
+      ? await supabase.from('leave_periods').update(payload).eq('id', editingLeave.id)
+      : await supabase.from('leave_periods').insert({ ...payload, created_by: profile.id })
     setSaving(false)
     if (error) { setMessage(error.message); return }
     await loadLeavePeriods()
     setLeaveOpen(false)
-    setMessage('Leave period created.')
+    setEditingLeave(null)
+    setMessage(editingLeave ? 'Leave period updated.' : 'Leave period created.')
+  }
+
+  async function deleteLeave(leave: LeavePeriod) {
+    if (profile?.role !== 'admin') return
+    const employee = leave.profile?.username || 'this employee'
+    if (!window.confirm(`Delete leave for ${employee} (${leave.start_date} to ${leave.end_date})?`)) return
+
+    const previous = leavePeriods
+    setLeavePeriods((current) => current.filter((item) => item.id !== leave.id))
+    const { error } = await supabase.from('leave_periods').delete().eq('id', leave.id)
+    if (error) {
+      setLeavePeriods(previous)
+      setMessage(error.message)
+      return
+    }
+    setMessage('Leave period deleted.')
   }
 
   async function quickStatus(task: Task, status: TaskStatus) {
@@ -632,7 +665,7 @@ function App() {
         )}
 
         {view === 'leave' && (
-          <LeavePage leaves={leavePeriods} onAdd={() => openLeave()} />
+          <LeavePage leaves={leavePeriods} onAdd={() => openLeave()} onEdit={editLeave} onDelete={deleteLeave} canDelete={profile?.role === 'admin'} />
         )}
       </main>
 
@@ -674,7 +707,7 @@ function App() {
         />
       )}
 
-      {leaveOpen && <LeaveModal form={leaveForm} setForm={setLeaveForm} profiles={profiles} onClose={() => setLeaveOpen(false)} onSubmit={saveLeave} saving={saving} />}
+      {leaveOpen && <LeaveModal form={leaveForm} setForm={setLeaveForm} profiles={profiles} editing={Boolean(editingLeave)} onClose={() => { setLeaveOpen(false); setEditingLeave(null) }} onSubmit={saveLeave} saving={saving} />}
     </div>
   )
 }
@@ -1074,7 +1107,7 @@ function formatTaskTime(task: Task, day?: string) {
   return 'Continues'
 }
 
-function LeavePage({ leaves, onAdd }: { leaves: LeavePeriod[]; onAdd: () => void }) {
+function LeavePage({ leaves, onAdd, onEdit, onDelete, canDelete }: { leaves: LeavePeriod[]; onAdd: () => void; onEdit: (leave: LeavePeriod) => void; onDelete: (leave: LeavePeriod) => void; canDelete: boolean }) {
   const today = toIsoDate(new Date())
   const activeAndUpcoming = [...leaves]
     .filter((leave) => leave.end_date >= today)
@@ -1091,26 +1124,31 @@ function LeavePage({ leaves, onAdd }: { leaves: LeavePeriod[]; onAdd: () => void
 
     <div className="leave-section">
       <h3>Current & upcoming <span>{activeAndUpcoming.length}</span></h3>
-      {activeAndUpcoming.length ? <LeaveList leaves={activeAndUpcoming} /> : <div className="empty-state">No current or upcoming leave.</div>}
+      {activeAndUpcoming.length ? <LeaveList leaves={activeAndUpcoming} onEdit={onEdit} onDelete={onDelete} canDelete={canDelete} /> : <div className="empty-state">No current or upcoming leave.</div>}
     </div>
 
     <div className="leave-section">
       <h3>Previous <span>{past.length}</span></h3>
-      {past.length ? <LeaveList leaves={past} /> : <div className="empty-state">No previous leave.</div>}
+      {past.length ? <LeaveList leaves={past} onEdit={onEdit} onDelete={onDelete} canDelete={canDelete} /> : <div className="empty-state">No previous leave.</div>}
     </div>
   </section>
 }
 
-function LeaveList({ leaves, compact = false }: { leaves: LeavePeriod[]; compact?: boolean }) {
+function LeaveList({ leaves, compact = false, onEdit, onDelete, canDelete = false }: { leaves: LeavePeriod[]; compact?: boolean; onEdit?: (leave: LeavePeriod) => void; onDelete?: (leave: LeavePeriod) => void; canDelete?: boolean }) {
   if (!leaves.length) return null
   return <div className="leave-list">{leaves.map((leave) => <article className="leave-card" key={leave.id}>
-    <Palmtree size={18} /><div><strong>{leave.profile?.username || 'Employee'} · {LEAVE_LABELS[leave.leave_type]}</strong>{!compact && <span>{leave.start_date} → {leave.end_date}{leave.note ? ` · ${leave.note}` : ''}</span>}</div>
+    <Palmtree size={18} />
+    <div className="leave-card-content"><strong>{leave.profile?.username || 'Employee'} · {LEAVE_LABELS[leave.leave_type]}</strong>{!compact && <span>{leave.start_date} → {leave.end_date}{leave.note ? ` · ${leave.note}` : ''}</span>}</div>
+    {!compact && onEdit && <div className="leave-card-actions">
+      <button type="button" className="icon-action" onClick={() => onEdit(leave)} aria-label="Edit leave" title="Edit leave"><Pencil size={17} /></button>
+      {canDelete && onDelete && <button type="button" className="icon-action danger" onClick={() => onDelete(leave)} aria-label="Delete leave" title="Delete leave"><Trash2 size={17} /></button>}
+    </div>}
   </article>)}</div>
 }
 
-function LeaveModal({ form, setForm, profiles, onClose, onSubmit, saving }: { form: LeaveFormData; setForm: (next: LeaveFormData) => void; profiles: Profile[]; onClose: () => void; onSubmit: (event: FormEvent) => void; saving: boolean }) {
+function LeaveModal({ form, setForm, profiles, editing, onClose, onSubmit, saving }: { form: LeaveFormData; setForm: (next: LeaveFormData) => void; profiles: Profile[]; editing: boolean; onClose: () => void; onSubmit: (event: FormEvent) => void; saving: boolean }) {
   return <div className="modal-backdrop"><form className="task-modal" onSubmit={onSubmit}>
-    <header><div><h2>Add Leave</h2><p>One entry can cover several days.</p></div><button type="button" onClick={onClose}><X /></button></header>
+    <header><div><h2>{editing ? 'Edit Leave' : 'Add Leave'}</h2><p>One entry can cover several days.</p></div><button type="button" onClick={onClose}><X /></button></header>
     <div className="form-grid">
       <label>Employee *<select value={form.profile_id} onChange={(e) => setForm({...form, profile_id:e.target.value})} required><option value="">Select employee</option>{profiles.map((p)=><option key={p.id} value={p.id}>{p.username}</option>)}</select></label>
       <label>Leave Type<select value={form.leave_type} onChange={(e)=>setForm({...form, leave_type:e.target.value as LeaveFormData['leave_type']})}>{Object.entries(LEAVE_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
@@ -1118,7 +1156,7 @@ function LeaveModal({ form, setForm, profiles, onClose, onSubmit, saving }: { fo
       <label>To *<input type="date" min={form.start_date} value={form.end_date} onChange={(e)=>setForm({...form,end_date:e.target.value})} required /></label>
     </div>
     <label>Note<textarea rows={3} maxLength={300} value={form.note} onChange={(e)=>setForm({...form,note:e.target.value})} /></label>
-    <footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving?'Saving…':'Create Leave'}</button></footer>
+    <footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Leave'}</button></footer>
   </form></div>
 }
 
