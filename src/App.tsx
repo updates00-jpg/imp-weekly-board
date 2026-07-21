@@ -16,11 +16,12 @@ import {
   ArchiveRestore,
   Trash2,
   UserRound,
+  Palmtree,
   X,
 } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, usernameToEmail } from './supabase'
-import type { Profile, Task, TaskFormData, TaskPriority, TaskStatus } from './types'
+import type { LeaveFormData, LeavePeriod, Profile, Task, TaskFormData, TaskPriority, TaskStatus } from './types'
 import { addDays, formatDay, formatLongDay, formatWeekRange, isSameDay, startOfWeek, toIsoDate } from './date'
 
 const USERS = Array.from({ length: 15 }, (_, index) => `IMP-${index + 1}`)
@@ -28,6 +29,7 @@ const EMPTY_FORM: TaskFormData = {
   title: '',
   description: '',
   task_date: toIsoDate(new Date()),
+  end_date: toIsoDate(new Date()),
   start_time: '',
   end_time: '',
   status: 'scheduled',
@@ -35,6 +37,10 @@ const EMPTY_FORM: TaskFormData = {
   owner_id: '',
   assignee_ids: [],
 }
+
+const EMPTY_LEAVE: LeaveFormData = { profile_id: '', leave_type: 'annual', start_date: toIsoDate(new Date()), end_date: toIsoDate(new Date()), note: '' }
+
+const LEAVE_LABELS = { annual: 'Annual leave', sick: 'Sick leave', training: 'Training', other: 'Other absence' } as const
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   scheduled: 'Scheduled',
@@ -69,6 +75,9 @@ function App() {
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([])
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [leavePeriods, setLeavePeriods] = useState<LeavePeriod[]>([])
+  const [leaveOpen, setLeaveOpen] = useState(false)
+  const [leaveForm, setLeaveForm] = useState<LeaveFormData>(EMPTY_LEAVE)
   const [filter, setFilter] = useState<'all' | 'mine' | 'today' | 'overdue' | 'done'>('all')
 
   useEffect(() => {
@@ -144,6 +153,7 @@ function App() {
         title,
         description,
         task_date,
+        end_date,
         start_time,
         end_time,
         status,
@@ -204,8 +214,8 @@ function App() {
         task_assignees(profile:profiles(id, username, role, active))
       `)
       .is('deleted_at', null)
-      .gte('task_date', from)
       .lte('task_date', to)
+      .gte('end_date', from)
       .order('task_date')
       .order('start_time', { nullsFirst: true })
     if (error) throw error
@@ -217,16 +227,31 @@ function App() {
     setTasks(mapped as Task[])
   }, [session, weekStart, weekEnd])
 
+
+  const loadLeavePeriods = useCallback(async () => {
+    if (!session) { setLeavePeriods([]); return }
+    const from = toIsoDate(weekStart)
+    const to = toIsoDate(weekEnd)
+    const { data, error } = await supabase
+      .from('leave_periods')
+      .select('*, profile:profiles!leave_periods_profile_id_fkey(id, username, role, active)')
+      .lte('start_date', to)
+      .gte('end_date', from)
+      .order('start_date')
+    if (error) throw error
+    setLeavePeriods((data || []) as LeavePeriod[])
+  }, [session, weekStart, weekEnd])
+
   useEffect(() => {
     if (!session) {
       setProfile(null)
       setTasks([])
       return
     }
-    Promise.all([loadCurrentProfile(), loadProfiles(), loadTasks(), loadPersonalTasks()]).catch((error) => {
+    Promise.all([loadCurrentProfile(), loadProfiles(), loadTasks(), loadPersonalTasks(), loadLeavePeriods()]).catch((error) => {
       setMessage(error.message || 'Could not load data.')
     })
-  }, [session, loadCurrentProfile, loadProfiles, loadTasks, loadPersonalTasks])
+  }, [session, loadCurrentProfile, loadProfiles, loadTasks, loadPersonalTasks, loadLeavePeriods])
 
 
   useEffect(() => {
@@ -243,7 +268,7 @@ function App() {
     const syncToCurrentDate = () => {
       const today = new Date()
       setSelectedDate((current) => isSameDay(current, today) ? current : today)
-      Promise.all([loadTasks(), loadPersonalTasks()]).catch((error) => setMessage(error.message || 'Could not refresh tasks.'))
+      Promise.all([loadTasks(), loadPersonalTasks(), loadLeavePeriods()]).catch((error) => setMessage(error.message || 'Could not refresh tasks.'))
     }
 
     const handleVisibility = () => {
@@ -260,7 +285,7 @@ function App() {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.clearInterval(dateCheckTimer)
     }
-  }, [session, loadTasks, loadPersonalTasks])
+  }, [session, loadTasks, loadPersonalTasks, loadLeavePeriods])
 
   useEffect(() => {
     if (!session) return
@@ -271,6 +296,7 @@ function App() {
         loadPersonalTasks()
         if (profile?.role === 'admin') { loadAdminTasks(); loadArchivedTasks() }
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_periods' }, () => { loadLeavePeriods() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_assignees' }, () => {
         loadTasks()
         loadPersonalTasks()
@@ -280,13 +306,14 @@ function App() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [session, profile?.role, loadTasks, loadPersonalTasks, loadAdminTasks, loadArchivedTasks])
+  }, [session, profile?.role, loadTasks, loadPersonalTasks, loadAdminTasks, loadArchivedTasks, loadLeavePeriods])
 
   function openNew(date = selectedDate) {
     setEditing(null)
     setForm({
       ...EMPTY_FORM,
       task_date: toIsoDate(date),
+      end_date: toIsoDate(date),
       owner_id: profile?.id || '',
       assignee_ids: profile?.id ? [profile.id] : [],
     })
@@ -299,6 +326,7 @@ function App() {
       title: task.title,
       description: task.description || '',
       task_date: task.task_date,
+      end_date: task.end_date || task.task_date,
       start_time: task.start_time?.slice(0, 5) || '',
       end_time: task.end_time?.slice(0, 5) || '',
       status: task.status,
@@ -317,8 +345,9 @@ function App() {
       setMessage('Title is required.')
       return
     }
-    if (form.end_time && form.start_time && form.end_time <= form.start_time) {
-      setMessage('End time must be later than start time.')
+    if (form.end_date < form.task_date) { setMessage('End date cannot be before start date.'); return }
+    if (form.end_date === form.task_date && form.end_time && form.start_time && form.end_time <= form.start_time) {
+      setMessage('For a same-day task, end time must be later than start time.')
       return
     }
 
@@ -328,6 +357,7 @@ function App() {
       title: form.title.trim(),
       description: form.description.trim() || null,
       task_date: form.task_date,
+      end_date: form.end_date,
       start_time: form.start_time || null,
       end_time: form.end_time || null,
       status: form.status,
@@ -369,6 +399,33 @@ function App() {
     } finally {
       setSaving(false)
     }
+  }
+
+  function openLeave(date = selectedDate) {
+    const iso = toIsoDate(date)
+    setLeaveForm({ ...EMPTY_LEAVE, profile_id: profile?.id || '', start_date: iso, end_date: iso })
+    setLeaveOpen(true)
+  }
+
+  async function saveLeave(event: FormEvent) {
+    event.preventDefault()
+    if (!profile || saving) return
+    if (!leaveForm.profile_id) { setMessage('Select an employee.'); return }
+    if (leaveForm.end_date < leaveForm.start_date) { setMessage('Leave end date cannot be before start date.'); return }
+    setSaving(true)
+    const { error } = await supabase.from('leave_periods').insert({
+      profile_id: leaveForm.profile_id,
+      leave_type: leaveForm.leave_type,
+      start_date: leaveForm.start_date,
+      end_date: leaveForm.end_date,
+      note: leaveForm.note.trim() || null,
+      created_by: profile.id,
+    })
+    setSaving(false)
+    if (error) { setMessage(error.message); return }
+    await loadLeavePeriods()
+    setLeaveOpen(false)
+    setMessage('Leave period created.')
   }
 
   async function quickStatus(task: Task, status: TaskStatus) {
@@ -443,12 +500,14 @@ function App() {
 
     if (!matchesSearch) return false
     if (filter === 'mine') return task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id)
-    if (filter === 'today') return task.task_date === todayIso
-    if (filter === 'overdue') return !['completed', 'cancelled'].includes(task.status) && task.task_date < todayIso
+    if (filter === 'today') return task.task_date <= todayIso && task.end_date >= todayIso
+    if (filter === 'overdue') return !['completed', 'cancelled'].includes(task.status) && task.end_date < todayIso
     if (filter === 'done') return task.status === 'completed'
     return true
   })
-  const dayTasks = filteredTasks.filter((task) => task.task_date === toIsoDate(selectedDate))
+  const selectedIso = toIsoDate(selectedDate)
+  const dayTasks = filteredTasks.filter((task) => task.task_date <= selectedIso && task.end_date >= selectedIso)
+  const dayLeaves = leavePeriods.filter((leave) => leave.start_date <= selectedIso && leave.end_date >= selectedIso)
   const mine = filteredTasks.filter(
     (task) => task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id),
   )
@@ -456,9 +515,9 @@ function App() {
     (task) => task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id),
   )
   const myDayStats = {
-    today: myVisibleTasks.filter((task) => task.task_date === todayIso && !['completed', 'cancelled'].includes(task.status)).length,
-    overdue: myVisibleTasks.filter((task) => task.task_date < todayIso && !['completed', 'cancelled'].includes(task.status)).length,
-    completedToday: myVisibleTasks.filter((task) => task.task_date === todayIso && task.status === 'completed').length,
+    today: myVisibleTasks.filter((task) => task.task_date <= todayIso && task.end_date >= todayIso && !['completed', 'cancelled'].includes(task.status)).length,
+    overdue: myVisibleTasks.filter((task) => task.end_date < todayIso && !['completed', 'cancelled'].includes(task.status)).length,
+    completedToday: myVisibleTasks.filter((task) => task.task_date <= todayIso && task.end_date >= todayIso && task.status === 'completed').length,
     nextTask: myVisibleTasks
       .filter((task) => task.task_date >= todayIso && !['completed', 'cancelled'].includes(task.status))
       .sort((a, b) => `${a.task_date} ${a.start_time || '23:59'}`.localeCompare(`${b.task_date} ${b.start_time || '23:59'}`))[0] || null,
@@ -466,7 +525,7 @@ function App() {
   const adminStats = profile?.role === 'admin' ? {
     active: adminTasks.filter((task) => !['completed', 'cancelled'].includes(task.status)).length,
     completedToday: adminTasks.filter((task) => task.status === 'completed' && task.task_date === todayIso).length,
-    overdue: adminTasks.filter((task) => !['completed', 'cancelled'].includes(task.status) && task.task_date < todayIso).length,
+    overdue: adminTasks.filter((task) => !['completed', 'cancelled'].includes(task.status) && task.end_date < todayIso).length,
     thisWeek: tasks.length,
   } : null
 
@@ -542,22 +601,26 @@ function App() {
       </section>
 
       <main>
-        {view === 'day' && (
-          <TaskList tasks={dayTasks} onEdit={openEdit} onStatus={quickStatus} onDelete={removeTask} />
-        )}
+        {view === 'day' && (<>
+          <LeaveList leaves={dayLeaves} />
+          <TaskList tasks={dayTasks} selectedDate={selectedIso} onEdit={openEdit} onStatus={quickStatus} onDelete={removeTask} />
+        </>)}
 
         {view === 'week' && (
           <div className="week-strip">
             {Array.from({ length: 7 }, (_, index) => {
               const date = addDays(weekStart, index)
-              const items = filteredTasks.filter((task) => task.task_date === toIsoDate(date))
+              const dateIso = toIsoDate(date)
+              const items = filteredTasks.filter((task) => task.task_date <= dateIso && task.end_date >= dateIso)
+              const leaves = leavePeriods.filter((leave) => leave.start_date <= dateIso && leave.end_date >= dateIso)
               return (
                 <section className={`day-section ${isSameDay(date, new Date()) ? 'is-today' : ''}`} key={toIsoDate(date)}>
                   <button className="day-heading" onClick={() => { setSelectedDate(date); setView('day') }}>
                     <span>{formatDay(date)}{isSameDay(date, new Date()) && <em>Today</em>}</span>
                     <strong>{items.length}</strong>
                   </button>
-                  <TaskList tasks={items} compact onEdit={openEdit} onStatus={quickStatus} onDelete={removeTask} />
+                  <LeaveList leaves={leaves} compact />
+                    <TaskList tasks={items} selectedDate={dateIso} compact onEdit={openEdit} onStatus={quickStatus} onDelete={removeTask} />
                   <button className="add-inline" onClick={() => openNew(date)}><Plus size={17} /> Add task</button>
                 </section>
               )
@@ -570,7 +633,7 @@ function App() {
         )}
       </main>
 
-      <button className="fab" onClick={() => openNew()} aria-label="Add task"><Plus /></button>
+      <div className="fab-stack"><button className="fab leave-fab" onClick={() => openLeave()} aria-label="Add leave"><Palmtree /></button><button className="fab" onClick={() => openNew()} aria-label="Add task"><Plus /></button></div>
 
       <nav className="bottom-nav">
         <button className={view === 'day' ? 'active' : ''} onClick={() => setView('day')}>
@@ -604,6 +667,8 @@ function App() {
           saving={saving}
         />
       )}
+
+      {leaveOpen && <LeaveModal form={leaveForm} setForm={setLeaveForm} profiles={profiles} onClose={() => setLeaveOpen(false)} onSubmit={saveLeave} saving={saving} />}
     </div>
   )
 }
@@ -782,12 +847,14 @@ function Login({ users }: { users: string[] }) {
 function TaskList({
   tasks,
   compact = false,
+  selectedDate,
   onEdit,
   onStatus,
   onDelete,
 }: {
   tasks: Task[]
   compact?: boolean
+  selectedDate?: string
   onEdit: (task: Task) => void
   onStatus: (task: Task, status: TaskStatus) => void
   onDelete: (task: Task) => void
@@ -800,7 +867,7 @@ function TaskList({
           <button className="task-main" onClick={() => onEdit(task)}>
             <div className="task-topline">
               <span className={`priority priority-${task.priority}`}>{PRIORITY_LABELS[task.priority]}</span>
-              <span className="time">{task.start_time ? task.start_time.slice(0, 5) : 'All day'}</span>
+              <span className="time">{formatTaskTime(task, selectedDate)}</span>
             </div>
             <h2>{task.title}</h2>
             {!compact && task.description && <p>{task.description}</p>}
@@ -926,12 +993,20 @@ function TaskModal({
 
         <div className="form-grid">
           <label>
-            Date *
-            <input type="date" value={form.task_date} onChange={(e) => setForm({ ...form, task_date: e.target.value })} required />
+            Start Date *
+            <input type="date" value={form.task_date} onChange={(e) => setForm({ ...form, task_date: e.target.value, end_date: form.end_date < e.target.value ? e.target.value : form.end_date })} required />
           </label>
           <label>
             Start Time
             <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
+          </label>
+          <label>
+            End Date *
+            <input type="date" value={form.end_date} min={form.task_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} required />
+          </label>
+          <label className="check-label next-day-check">
+            <input type="checkbox" checked={form.end_date === toIsoDate(addDays(new Date(`${form.task_date}T12:00:00`), 1))} onChange={(e) => setForm({ ...form, end_date: e.target.checked ? toIsoDate(addDays(new Date(`${form.task_date}T12:00:00`), 1)) : form.task_date })} />
+            <span>Ends next day</span>
           </label>
           <label>
             End Time
@@ -981,6 +1056,37 @@ function TaskModal({
       </form>
     </div>
   )
+}
+
+
+function formatTaskTime(task: Task, day?: string) {
+  const start = task.start_time?.slice(0, 5)
+  const end = task.end_time?.slice(0, 5)
+  if (!day || task.task_date === task.end_date) return start ? `${start}${end ? `–${end}` : ''}` : 'All day'
+  if (day === task.task_date) return start ? `${start} → next day` : 'Starts'
+  if (day === task.end_date) return end ? `continued → ${end}` : 'Ends'
+  return 'Continues'
+}
+
+function LeaveList({ leaves, compact = false }: { leaves: LeavePeriod[]; compact?: boolean }) {
+  if (!leaves.length) return null
+  return <div className="leave-list">{leaves.map((leave) => <article className="leave-card" key={leave.id}>
+    <Palmtree size={18} /><div><strong>{leave.profile?.username || 'Employee'} · {LEAVE_LABELS[leave.leave_type]}</strong>{!compact && <span>{leave.start_date} → {leave.end_date}{leave.note ? ` · ${leave.note}` : ''}</span>}</div>
+  </article>)}</div>
+}
+
+function LeaveModal({ form, setForm, profiles, onClose, onSubmit, saving }: { form: LeaveFormData; setForm: (next: LeaveFormData) => void; profiles: Profile[]; onClose: () => void; onSubmit: (event: FormEvent) => void; saving: boolean }) {
+  return <div className="modal-backdrop"><form className="task-modal" onSubmit={onSubmit}>
+    <header><div><h2>Add Leave</h2><p>One entry can cover several days.</p></div><button type="button" onClick={onClose}><X /></button></header>
+    <div className="form-grid">
+      <label>Employee *<select value={form.profile_id} onChange={(e) => setForm({...form, profile_id:e.target.value})} required><option value="">Select employee</option>{profiles.map((p)=><option key={p.id} value={p.id}>{p.username}</option>)}</select></label>
+      <label>Leave Type<select value={form.leave_type} onChange={(e)=>setForm({...form, leave_type:e.target.value as LeaveFormData['leave_type']})}>{Object.entries(LEAVE_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
+      <label>From *<input type="date" value={form.start_date} onChange={(e)=>setForm({...form,start_date:e.target.value,end_date:form.end_date<e.target.value?e.target.value:form.end_date})} required /></label>
+      <label>To *<input type="date" min={form.start_date} value={form.end_date} onChange={(e)=>setForm({...form,end_date:e.target.value})} required /></label>
+    </div>
+    <label>Note<textarea rows={3} maxLength={300} value={form.note} onChange={(e)=>setForm({...form,note:e.target.value})} /></label>
+    <footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving?'Saving…':'Create Leave'}</button></footer>
+  </form></div>
 }
 
 export default App

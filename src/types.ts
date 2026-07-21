@@ -14,6 +14,7 @@ export interface Task {
   title: string
   description: string | null
   task_date: string
+  end_date: string
   start_time: string | null
   end_time: string | null
   status: TaskStatus
@@ -31,10 +32,33 @@ export interface TaskFormData {
   title: string
   description: string
   task_date: string
+  end_date: string
   start_time: string
   end_time: string
   status: TaskStatus
   priority: TaskPriority
   owner_id: string
   assignee_ids: string[]
+}
+
+export type LeaveType = 'annual' | 'sick' | 'training' | 'other'
+
+export interface LeavePeriod {
+  id: string
+  profile_id: string
+  leave_type: LeaveType
+  start_date: string
+  end_date: string
+  note: string | null
+  created_by: string
+  created_at: string
+  profile?: Profile | null
+}
+
+export interface LeaveFormData {
+  profile_id: string
+  leave_type: LeaveType
+  start_date: string
+  end_date: string
+  note: string
 }

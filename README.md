@@ -123,3 +123,8 @@ Nowy PIN musi mieć dokładnie 6 cyfr.
 ## Version 2.0
 
 Tasks can be edited by tapping the task card or the explicit **Edit** button. The edit form supports title, description, date, times, owner, status, priority, and assigned users. Changes are saved to Supabase and synchronized through Realtime.
+
+## v2.4 database migration
+
+Before deploying v2.4, run `supabase/migration_v2_4.sql` once in Supabase Dashboard → SQL Editor.
+It adds cross-midnight/multi-day task dates and the `leave_periods` table.
