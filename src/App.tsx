@@ -230,17 +230,16 @@ function App() {
 
   const loadLeavePeriods = useCallback(async () => {
     if (!session) { setLeavePeriods([]); return }
-    const from = toIsoDate(weekStart)
-    const to = toIsoDate(weekEnd)
+    // The dedicated Leave tab must show every leave record, not only records
+    // overlapping the currently selected week. Day/week views filter this
+    // complete list locally for the date being displayed.
     const { data, error } = await supabase
       .from('leave_periods')
       .select('*, profile:profiles!leave_periods_profile_id_fkey(id, username, role, active)')
-      .lte('start_date', to)
-      .gte('end_date', from)
       .order('start_date')
     if (error) throw error
     setLeavePeriods((data || []) as LeavePeriod[])
-  }, [session, weekStart, weekEnd])
+  }, [session])
 
   useEffect(() => {
     if (!session) {
