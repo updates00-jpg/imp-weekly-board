@@ -137,3 +137,8 @@ Before deploying v2.5, run `supabase/migration_v2_5.sql` once in the Supabase SQ
 
 Before deployment, run `supabase/migration_v2_6.sql` once in Supabase SQL Editor.
 Duty and Stand By are created from the Board using the dedicated **Add Duty / Stand By** button. They are stored in `public.shifts`, always default to 07:30–07:30, and the end date is automatically the next day.
+
+
+## v2.6.1 shift display fix
+
+Duty and Stand By are stored in `shifts` and displayed on the Board only on `start_date`. A shift starting on 22 July at 07:30 and ending on 23 July at 07:30 therefore belongs to the 22 July cell. This avoids false conflicts between consecutive 24-hour shifts.

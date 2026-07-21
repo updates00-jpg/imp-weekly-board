@@ -284,8 +284,8 @@ function App() {
     const { data, error } = await supabase
       .from('shifts')
       .select('*, profile:profiles!shifts_profile_id_fkey(id, username, role, active)')
+      .gte('start_date', from)
       .lte('start_date', to)
-      .gte('end_date', from)
       .order('start_date')
       .order('start_time')
     if (error) throw error
@@ -411,7 +411,28 @@ function App() {
     setMessage('')
     setSaving(true)
     try {
-      const { error } = await supabase.from('shifts').insert({ ...shiftForm, created_by: profile.id })
+      const normalizedShift = {
+        ...shiftForm,
+        end_date: addIsoDays(shiftForm.start_date, 1),
+        start_time: shiftForm.start_time || '07:30',
+        end_time: shiftForm.end_time || '07:30',
+        created_by: profile.id,
+      }
+
+      // Check first so the user gets a readable message. The database unique
+      // constraint remains the final protection against concurrent inserts.
+      const { data: existing, error: checkError } = await supabase
+        .from('shifts')
+        .select('id, shift_type')
+        .eq('profile_id', normalizedShift.profile_id)
+        .eq('start_date', normalizedShift.start_date)
+        .maybeSingle()
+      if (checkError) throw checkError
+      if (existing) {
+        throw new Error(`This employee already has ${existing.shift_type === 'duty' ? 'Duty' : 'Stand By'} on this date.`)
+      }
+
+      const { error } = await supabase.from('shifts').insert(normalizedShift)
       if (error) {
         if (error.code === '23505') throw new Error('This employee already has Duty or Stand By starting on this date.')
         throw error
@@ -1270,7 +1291,7 @@ function ShiftModal({ form, setForm, profiles, onClose, onSubmit, saving }: {
 }) {
   return <div className="modal-backdrop">
     <form className="task-modal shift-modal" onSubmit={onSubmit}>
-      <header><div><h2>Add Duty / Stand By</h2><p>Shift always ends the next day.</p></div><button type="button" onClick={onClose}><X /></button></header>
+      <header><div><h2>Add Duty / Stand By</h2><p>The shift is assigned to its start date and ends automatically the next day.</p></div><button type="button" onClick={onClose}><X /></button></header>
       <label>Employee<select value={form.profile_id} onChange={(e) => setForm({ ...form, profile_id: e.target.value })} required>
         <option value="">Select employee</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.username}</option>)}
       </select></label>
@@ -1334,7 +1355,10 @@ function PlanningBoard({
       profile: person,
       date,
       tasks: tasks.filter((task) => belongsTo(task, person.id) && (task.task_kind || 'task') === 'task' && taskOccursOnDate(task, iso) && !['cancelled'].includes(task.status)),
-      shifts: shifts.filter((shift) => shift.profile_id === person.id && shift.start_date <= iso && shift.end_date >= iso),
+      // A 24-hour shift belongs to the day on which it starts.
+      // Showing it again on the end date caused two consecutive shifts to look
+      // like a Duty/Stand By conflict in the same Board cell.
+      shifts: shifts.filter((shift) => shift.profile_id === person.id && shift.start_date === iso),
       leave: leaves.find((leave) => leave.profile_id === person.id && leave.start_date <= iso && leave.end_date >= iso) || null,
     }
   }
