@@ -22,7 +22,7 @@ import {
 } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, usernameToEmail } from './supabase'
-import type { LeaveFormData, LeavePeriod, Profile, Task, TaskFormData, TaskKind, TaskPriority, TaskStatus } from './types'
+import type { LeaveFormData, LeavePeriod, Profile, Shift, ShiftFormData, ShiftType, Task, TaskFormData, TaskPriority, TaskStatus } from './types'
 import { addDays, formatDay, formatLongDay, formatWeekRange, isSameDay, startOfWeek, toIsoDate } from './date'
 
 const USERS = Array.from({ length: 15 }, (_, index) => `IMP-${index + 1}`)
@@ -41,6 +41,8 @@ const EMPTY_FORM: TaskFormData = {
   assignee_ids: [],
 }
 
+const EMPTY_SHIFT: ShiftFormData = { profile_id: '', shift_type: 'duty', start_date: toIsoDate(new Date()), end_date: addIsoDays(toIsoDate(new Date()), 1), start_time: '07:30', end_time: '07:30' }
+
 const EMPTY_LEAVE: LeaveFormData = { profile_id: '', leave_type: 'annual', start_date: toIsoDate(new Date()), end_date: toIsoDate(new Date()), note: '' }
 
 const LEAVE_LABELS = { annual: 'Annual leave', sick: 'Sick leave', training: 'Training', other: 'Other absence' } as const
@@ -52,8 +54,6 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   blocked: 'Blocked',
   cancelled: 'Cancelled',
 }
-
-const TASK_KIND_LABELS: Record<TaskKind, string> = { task: 'Task', duty: 'Duty', standby: 'Stand By' }
 
 
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
@@ -120,6 +120,9 @@ function App() {
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [leavePeriods, setLeavePeriods] = useState<LeavePeriod[]>([])
+  const [shifts, setShifts] = useState<Shift[]>([])
+  const [shiftOpen, setShiftOpen] = useState(false)
+  const [shiftForm, setShiftForm] = useState<ShiftFormData>(EMPTY_SHIFT)
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [editingLeave, setEditingLeave] = useState<LeavePeriod | null>(null)
   const [leaveForm, setLeaveForm] = useState<LeaveFormData>(EMPTY_LEAVE)
@@ -274,6 +277,22 @@ function App() {
   }, [session, weekStart, weekEnd])
 
 
+  const loadShifts = useCallback(async () => {
+    if (!session) { setShifts([]); return }
+    const from = toIsoDate(weekStart)
+    const to = toIsoDate(weekEnd)
+    const { data, error } = await supabase
+      .from('shifts')
+      .select('*, profile:profiles!shifts_profile_id_fkey(id, username, role, active)')
+      .lte('start_date', to)
+      .gte('end_date', from)
+      .order('start_date')
+      .order('start_time')
+    if (error) throw error
+    setShifts((data || []) as Shift[])
+  }, [session, weekStart, weekEnd])
+
+
   const loadLeavePeriods = useCallback(async () => {
     if (!session) { setLeavePeriods([]); return }
     // The dedicated Leave tab must show every leave record, not only records
@@ -293,10 +312,10 @@ function App() {
       setTasks([])
       return
     }
-    Promise.all([loadCurrentProfile(), loadProfiles(), loadTasks(), loadPersonalTasks(), loadLeavePeriods()]).catch((error) => {
+    Promise.all([loadCurrentProfile(), loadProfiles(), loadTasks(), loadPersonalTasks(), loadLeavePeriods(), loadShifts()]).catch((error) => {
       setMessage(error.message || 'Could not load data.')
     })
-  }, [session, loadCurrentProfile, loadProfiles, loadTasks, loadPersonalTasks, loadLeavePeriods])
+  }, [session, loadCurrentProfile, loadProfiles, loadTasks, loadPersonalTasks, loadLeavePeriods, loadShifts])
 
 
   useEffect(() => {
@@ -313,7 +332,7 @@ function App() {
     const syncToCurrentDate = () => {
       const today = new Date()
       setSelectedDate((current) => isSameDay(current, today) ? current : today)
-      Promise.all([loadTasks(), loadPersonalTasks(), loadLeavePeriods()]).catch((error) => setMessage(error.message || 'Could not refresh tasks.'))
+      Promise.all([loadTasks(), loadPersonalTasks(), loadLeavePeriods(), loadShifts()]).catch((error) => setMessage(error.message || 'Could not refresh tasks.'))
     }
 
     const handleVisibility = () => {
@@ -330,7 +349,7 @@ function App() {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.clearInterval(dateCheckTimer)
     }
-  }, [session, loadTasks, loadPersonalTasks, loadLeavePeriods])
+  }, [session, loadTasks, loadPersonalTasks, loadLeavePeriods, loadShifts])
 
   useEffect(() => {
     if (!session) return
@@ -342,6 +361,7 @@ function App() {
         if (profile?.role === 'admin') { loadAdminTasks(); loadArchivedTasks() }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_periods' }, () => { loadLeavePeriods() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, () => { loadShifts() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_assignees' }, () => {
         loadTasks()
         loadPersonalTasks()
@@ -351,7 +371,7 @@ function App() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [session, profile?.role, loadTasks, loadPersonalTasks, loadAdminTasks, loadArchivedTasks, loadLeavePeriods])
+  }, [session, profile?.role, loadTasks, loadPersonalTasks, loadAdminTasks, loadArchivedTasks, loadLeavePeriods, loadShifts])
 
   function openNew(date = selectedDate) {
     setEditing(null)
@@ -376,6 +396,34 @@ function App() {
       assignee_ids: [target.id],
     })
     setFormOpen(true)
+  }
+
+
+  function openShiftFor(target: Profile, date: Date) {
+    const startDate = toIsoDate(date)
+    setShiftForm({ ...EMPTY_SHIFT, profile_id: target.id, start_date: startDate, end_date: addIsoDays(startDate, 1) })
+    setShiftOpen(true)
+  }
+
+  async function saveShift(event: FormEvent) {
+    event.preventDefault()
+    if (!profile || saving) return
+    setMessage('')
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('shifts').insert({ ...shiftForm, created_by: profile.id })
+      if (error) {
+        if (error.code === '23505') throw new Error('This employee already has Duty or Stand By starting on this date.')
+        throw error
+      }
+      await loadShifts()
+      setShiftOpen(false)
+      setMessage(`${shiftForm.shift_type === 'duty' ? 'Duty' : 'Stand By'} saved.`)
+    } catch (error: any) {
+      setMessage(error.message || 'Could not save Duty / Stand By.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   function openEdit(task: Task) {
@@ -406,31 +454,6 @@ function App() {
       return
     }
     if (form.end_date < form.task_date) { setMessage('End date cannot be before start date.'); return }
-    if (form.task_kind !== 'task' && (!form.start_time || !form.end_time)) {
-      setMessage('Duty and Stand By require both a start time and an end time.')
-      return
-    }
-    const formInterval = intervalFor(form)
-    if (formInterval.end <= formInterval.start) {
-      setMessage('End date and time must be later than start date and time.')
-      return
-    }
-    if (form.task_kind !== 'task') {
-      const opposite: TaskKind = form.task_kind === 'duty' ? 'standby' : 'duty'
-      const selectedPeople = new Set([form.owner_id, ...form.assignee_ids].filter(Boolean))
-      const conflict = personalTasks.some((task) => {
-        if (editing && task.id === editing.id) return false
-        if (task.task_kind !== opposite || task.deleted_at) return false
-        if (!intervalsOverlap(task, form)) return false
-        const taskPeople = new Set([task.owner_id, ...(task.assignees || []).map((item) => item.id)].filter(Boolean) as string[])
-        return [...selectedPeople].some((id) => taskPeople.has(id))
-      })
-      if (conflict) {
-        setMessage('Duty and Stand By cannot overlap for the same person.')
-        return
-      }
-    }
-
     setSaving(true)
 
     const payload = {
@@ -442,7 +465,7 @@ function App() {
       end_time: form.end_time || null,
       status: form.status,
       priority: form.priority,
-      task_kind: form.task_kind,
+      task_kind: 'task',
       owner_id: form.owner_id || null,
     }
 
@@ -762,8 +785,10 @@ function App() {
             profiles={profiles}
             tasks={tasks}
             leaves={leavePeriods}
+            shifts={shifts}
             weekStart={weekStart}
             onAssign={openNewFor}
+            onAddShift={openShiftFor}
             onEdit={openEdit}
           />
         )}
@@ -813,6 +838,8 @@ function App() {
           saving={saving}
         />
       )}
+
+      {shiftOpen && <ShiftModal form={shiftForm} setForm={setShiftForm} profiles={profiles} onClose={() => setShiftOpen(false)} onSubmit={saveShift} saving={saving} />}
 
       {leaveOpen && <LeaveModal form={leaveForm} setForm={setLeaveForm} profiles={profiles} editing={Boolean(editingLeave)} onClose={() => { setLeaveOpen(false); setEditingLeave(null) }} onSubmit={saveLeave} saving={saving} />}
     </div>
@@ -1139,12 +1166,6 @@ function TaskModal({
 
         <div className="form-grid">
           <label>
-            Entry Type
-            <select value={form.task_kind} onChange={(e) => setForm({ ...form, task_kind: e.target.value as TaskKind })}>
-              {Object.entries(TASK_KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>
-          <label>
             Start Date *
             <input
               type="date"
@@ -1238,6 +1259,36 @@ function TaskModal({
 }
 
 
+
+function ShiftModal({ form, setForm, profiles, onClose, onSubmit, saving }: {
+  form: ShiftFormData
+  setForm: (next: ShiftFormData) => void
+  profiles: Profile[]
+  onClose: () => void
+  onSubmit: (event: FormEvent) => void
+  saving: boolean
+}) {
+  return <div className="modal-backdrop">
+    <form className="task-modal shift-modal" onSubmit={onSubmit}>
+      <header><div><h2>Add Duty / Stand By</h2><p>Shift always ends the next day.</p></div><button type="button" onClick={onClose}><X /></button></header>
+      <label>Employee<select value={form.profile_id} onChange={(e) => setForm({ ...form, profile_id: e.target.value })} required>
+        <option value="">Select employee</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.username}</option>)}
+      </select></label>
+      <div className="shift-type-picker">
+        <button type="button" className={form.shift_type === 'duty' ? 'active' : ''} onClick={() => setForm({ ...form, shift_type: 'duty' })}>🟦 Duty</button>
+        <button type="button" className={form.shift_type === 'standby' ? 'active' : ''} onClick={() => setForm({ ...form, shift_type: 'standby' })}>🟪 Stand By</button>
+      </div>
+      <div className="form-grid">
+        <label>Start Date *<input type="date" value={form.start_date} onChange={(e) => { const start_date=e.target.value; setForm({ ...form, start_date, end_date:addIsoDays(start_date,1) }) }} required /></label>
+        <label>Start Time *<input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time:e.target.value })} required /></label>
+        <label>End Date<input type="date" value={form.end_date} disabled /></label>
+        <label>End Time *<input type="time" value={form.end_time} onChange={(e) => setForm({ ...form, end_time:e.target.value })} required /></label>
+      </div>
+      <footer><button type="button" className="secondary-button" onClick={onClose} disabled={saving}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Save shift'}</button></footer>
+    </form>
+  </div>
+}
+
 function formatTaskTime(task: Task, day?: string) {
   const start = task.start_time?.slice(0, 5)
   const end = task.end_time?.slice(0, 5)
@@ -1248,21 +1299,25 @@ function formatTaskTime(task: Task, day?: string) {
 }
 
 
-type BoardCell = { profile: Profile; date: Date; tasks: Task[]; leave: LeavePeriod | null }
+type BoardCell = { profile: Profile; date: Date; tasks: Task[]; shifts: Shift[]; leave: LeavePeriod | null }
 
 function PlanningBoard({
   profiles,
   tasks,
   leaves,
+  shifts,
   weekStart,
   onAssign,
+  onAddShift,
   onEdit,
 }: {
   profiles: Profile[]
   tasks: Task[]
   leaves: LeavePeriod[]
+  shifts: Shift[]
   weekStart: Date
   onAssign: (profile: Profile, date: Date) => void
+  onAddShift: (profile: Profile, date: Date) => void
   onEdit: (task: Task) => void
 }) {
   const [selected, setSelected] = useState<BoardCell | null>(null)
@@ -1278,7 +1333,8 @@ function PlanningBoard({
     return {
       profile: person,
       date,
-      tasks: tasks.filter((task) => belongsTo(task, person.id) && taskOccursOnDate(task, iso) && !['cancelled'].includes(task.status)),
+      tasks: tasks.filter((task) => belongsTo(task, person.id) && (task.task_kind || 'task') === 'task' && taskOccursOnDate(task, iso) && !['cancelled'].includes(task.status)),
+      shifts: shifts.filter((shift) => shift.profile_id === person.id && shift.start_date <= iso && shift.end_date >= iso),
       leave: leaves.find((leave) => leave.profile_id === person.id && leave.start_date <= iso && leave.end_date >= iso) || null,
     }
   }
@@ -1293,8 +1349,8 @@ function PlanningBoard({
   }
 
   function CellContent({ cell }: { cell: BoardCell }) {
-    const duty = cell.tasks.some((task) => task.task_kind === 'duty')
-    const standby = cell.tasks.some((task) => task.task_kind === 'standby')
+    const duty = cell.shifts.some((shift) => shift.shift_type === 'duty')
+    const standby = cell.shifts.some((shift) => shift.shift_type === 'standby')
     const normal = cell.tasks.filter((task) => (task.task_kind || 'task') === 'task' && task.status !== 'cancelled')
     return <>
       <span className="board-icons" aria-label={`${cell.profile.username} ${toIsoDate(cell.date)}`}>
@@ -1352,15 +1408,20 @@ function PlanningBoard({
           <button type="button" onClick={() => setSelected(null)}><X /></button>
         </header>
         {selected.leave && <div className="board-detail-status leave-status">🟥 {LEAVE_LABELS[selected.leave.leave_type]}</div>}
+        {selected.shifts.map((shift) => <div className="shift-detail" key={shift.id}>
+          <span>{shift.shift_type === 'duty' ? '🟦' : '🟪'}</span>
+          <div><strong>{shift.shift_type === 'duty' ? 'Duty' : 'Stand By'}</strong><small>{shift.start_date} {shift.start_time.slice(0,5)} → {shift.end_date} {shift.end_time.slice(0,5)}</small></div>
+        </div>)}
         {selected.tasks.length ? <div className="board-detail-list">
           {selected.tasks.map((task) => <button type="button" key={task.id} onClick={() => { setSelected(null); onEdit(task) }}>
-            <span>{task.task_kind === 'duty' ? '🟦' : task.task_kind === 'standby' ? '🟪' : '📋'}</span>
+            <span>📋</span>
             <div><strong>{task.title}</strong><small>{formatTaskTime(task, toIsoDate(selected.date))}</small></div>
             <ChevronRight size={18} />
           </button>)}
-        </div> : <div className="empty-state compact-empty">No entries for this day.</div>}
-        <footer className="single-action-footer">
-          <button className="primary-button" type="button" onClick={() => { const { profile, date } = selected; setSelected(null); onAssign(profile, date) }}><Plus size={18} /> Assign task</button>
+        </div> : selected.shifts.length ? null : <div className="empty-state compact-empty">No entries for this day.</div>}
+        <footer className="board-action-footer">
+          <button className="primary-button" type="button" onClick={() => { const { profile, date } = selected; setSelected(null); onAssign(profile, date) }}><Plus size={18} /> Add task</button>
+          <button className="secondary-button" type="button" onClick={() => { const { profile, date } = selected; setSelected(null); onAddShift(profile, date) }}><Clock3 size={18} /> Add Duty / Stand By</button>
         </footer>
       </section>
     </div>}

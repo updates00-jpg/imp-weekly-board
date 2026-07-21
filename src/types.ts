@@ -66,3 +66,27 @@ export interface LeaveFormData {
   end_date: string
   note: string
 }
+
+export type ShiftType = 'duty' | 'standby'
+
+export interface Shift {
+  id: string
+  profile_id: string
+  shift_type: ShiftType
+  start_date: string
+  end_date: string
+  start_time: string
+  end_time: string
+  created_by: string
+  created_at: string
+  profile?: Profile | null
+}
+
+export interface ShiftFormData {
+  profile_id: string
+  shift_type: ShiftType
+  start_date: string
+  end_date: string
+  start_time: string
+  end_time: string
+}

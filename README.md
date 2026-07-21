@@ -132,3 +132,8 @@ It adds cross-midnight/multi-day task dates and the `leave_periods` table.
 ## v2.5 migration
 
 Before deploying v2.5, run `supabase/migration_v2_5.sql` once in the Supabase SQL Editor. It adds the explicit `Task`, `Duty`, and `Stand By` entry types used by the weekly Board.
+
+## v2.6 — separate Duty / Stand By
+
+Before deployment, run `supabase/migration_v2_6.sql` once in Supabase SQL Editor.
+Duty and Stand By are created from the Board using the dedicated **Add Duty / Stand By** button. They are stored in `public.shifts`, always default to 07:30–07:30, and the end date is automatically the next day.

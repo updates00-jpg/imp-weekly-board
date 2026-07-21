@@ -498,3 +498,14 @@ legend { font-weight: 900; padding: 0 7px; }
   .bottom-nav button span { font-size: .59rem; }
   .bottom-nav svg { width: 18px; height: 18px; }
 }
+
+/* v2.6: dedicated Duty / Stand By flow */
+.board-action-footer { display: grid; grid-template-columns: 1fr; gap: 9px; margin-top: 14px; }
+.board-action-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.shift-detail { display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: center; padding: 11px; margin-bottom: 8px; border: 1px solid #dbe3ee; border-radius: 13px; background: #f8fafc; }
+.shift-detail div { display: grid; gap: 3px; }
+.shift-detail small { color: #64748b; }
+.shift-modal header p { margin: 4px 0 0; color: #64748b; font-size: .82rem; }
+.shift-type-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.shift-type-picker button { min-height: 46px; border: 1px solid #cbd5e1; border-radius: 12px; background: white; font-weight: 850; }
+.shift-type-picker button.active { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,.15); background: #eff6ff; }
