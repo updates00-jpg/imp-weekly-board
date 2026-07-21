@@ -128,3 +128,7 @@ Tasks can be edited by tapping the task card or the explicit **Edit** button. Th
 
 Before deploying v2.4, run `supabase/migration_v2_4.sql` once in Supabase Dashboard → SQL Editor.
 It adds cross-midnight/multi-day task dates and the `leave_periods` table.
+
+## v2.5 migration
+
+Before deploying v2.5, run `supabase/migration_v2_5.sql` once in the Supabase SQL Editor. It adds the explicit `Task`, `Duty`, and `Stand By` entry types used by the weekly Board.

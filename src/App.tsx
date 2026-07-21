@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CircleAlert,
   ClipboardList,
+  LayoutGrid,
   Clock3,
   UsersRound,
   LogOut,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, usernameToEmail } from './supabase'
-import type { LeaveFormData, LeavePeriod, Profile, Task, TaskFormData, TaskPriority, TaskStatus } from './types'
+import type { LeaveFormData, LeavePeriod, Profile, Task, TaskFormData, TaskKind, TaskPriority, TaskStatus } from './types'
 import { addDays, formatDay, formatLongDay, formatWeekRange, isSameDay, startOfWeek, toIsoDate } from './date'
 
 const USERS = Array.from({ length: 15 }, (_, index) => `IMP-${index + 1}`)
@@ -34,6 +35,7 @@ const EMPTY_FORM: TaskFormData = {
   end_time: '',
   status: 'scheduled',
   priority: 'normal',
+  task_kind: 'task',
   owner_id: '',
   assignee_ids: [],
 }
@@ -50,6 +52,8 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   cancelled: 'Cancelled',
 }
 
+const TASK_KIND_LABELS: Record<TaskKind, string> = { task: 'Task', duty: 'Duty', standby: 'Stand By' }
+
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
   low: 'Low',
   normal: 'Normal',
@@ -64,7 +68,7 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [personalTasks, setPersonalTasks] = useState<Task[]>([])
   const [selectedDate, setSelectedDate] = useState(new Date())
-  const [view, setView] = useState<'day' | 'week' | 'mine' | 'leave'>('day')
+  const [view, setView] = useState<'day' | 'week' | 'mine' | 'board' | 'leave'>('day')
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [formOpen, setFormOpen] = useState(false)
@@ -159,6 +163,7 @@ function App() {
         end_time,
         status,
         priority,
+        task_kind,
         owner_id,
         created_by,
         created_at,
@@ -320,6 +325,19 @@ function App() {
     setFormOpen(true)
   }
 
+  function openNewFor(target: Profile, date: Date) {
+    setEditing(null)
+    const iso = toIsoDate(date)
+    setForm({
+      ...EMPTY_FORM,
+      task_date: iso,
+      end_date: iso,
+      owner_id: target.id,
+      assignee_ids: [target.id],
+    })
+    setFormOpen(true)
+  }
+
   function openEdit(task: Task) {
     setEditing(task)
     setForm({
@@ -331,6 +349,7 @@ function App() {
       end_time: task.end_time?.slice(0, 5) || '',
       status: task.status,
       priority: task.priority,
+      task_kind: task.task_kind || 'task',
       owner_id: task.owner_id || '',
       assignee_ids: task.assignees?.map((item) => item.id) || [],
     })
@@ -350,6 +369,21 @@ function App() {
       setMessage('For a same-day task, end time must be later than start time.')
       return
     }
+    if (form.task_kind !== 'task') {
+      const opposite: TaskKind = form.task_kind === 'duty' ? 'standby' : 'duty'
+      const selectedPeople = new Set([form.owner_id, ...form.assignee_ids].filter(Boolean))
+      const conflict = personalTasks.some((task) => {
+        if (editing && task.id === editing.id) return false
+        if (task.task_kind !== opposite || task.deleted_at) return false
+        const overlaps = task.task_date <= form.end_date && task.end_date >= form.task_date
+        const taskPeople = new Set([task.owner_id, ...(task.assignees || []).map((item) => item.id)].filter(Boolean) as string[])
+        return overlaps && [...selectedPeople].some((id) => taskPeople.has(id))
+      })
+      if (conflict) {
+        setMessage('Duty and Stand By cannot be assigned to the same person on the same day.')
+        return
+      }
+    }
 
     setSaving(true)
 
@@ -362,6 +396,7 @@ function App() {
       end_time: form.end_time || null,
       status: form.status,
       priority: form.priority,
+      task_kind: form.task_kind,
       owner_id: form.owner_id || null,
     }
 
@@ -566,7 +601,7 @@ function App() {
       <header className="topbar">
         <div>
           <div className="eyebrow">IMP WEEKLY BOARD</div>
-          <h1>{view === 'day' ? formatLongDay(selectedDate) : view === 'week' ? formatWeekRange(weekStart, weekEnd) : view === 'mine' ? 'My Tasks' : 'Leave'}</h1>
+          <h1>{view === 'day' ? formatLongDay(selectedDate) : view === 'week' ? formatWeekRange(weekStart, weekEnd) : view === 'mine' ? 'My Tasks' : view === 'board' ? `Board · ${formatWeekRange(weekStart, weekEnd)}` : 'Leave'}</h1>
         </div>
         <button className="icon-button" onClick={() => supabase.auth.signOut()} aria-label="Sign out">
           <LogOut size={20} />
@@ -581,21 +616,21 @@ function App() {
         </div>
       )}
 
-      {(view === 'day' || view === 'week') && (
+      {(view === 'day' || view === 'week' || view === 'board') && (
         <div className="date-nav">
-          <button onClick={() => setSelectedDate(addDays(selectedDate, view === 'week' ? -7 : -1))}>
+          <button onClick={() => setSelectedDate(addDays(selectedDate, view === 'week' || view === 'board' ? -7 : -1))}>
             <ChevronLeft />
           </button>
           <button className="today-button" onClick={() => setSelectedDate(new Date())}>Today</button>
-          <button onClick={() => setSelectedDate(addDays(selectedDate, view === 'week' ? 7 : 1))}>
+          <button onClick={() => setSelectedDate(addDays(selectedDate, view === 'week' || view === 'board' ? 7 : 1))}>
             <ChevronRight />
           </button>
         </div>
       )}
 
-      {profile && view !== 'leave' && <MyDayDashboard username={profile.username} stats={myDayStats} />}
+      {profile && view !== 'leave' && view !== 'board' && <MyDayDashboard username={profile.username} stats={myDayStats} />}
 
-      {adminStats && view !== 'leave' && (
+      {adminStats && view !== 'leave' && view !== 'board' && (
         <AdminDashboard
           stats={adminStats}
           profiles={profiles}
@@ -603,7 +638,7 @@ function App() {
         />
       )}
 
-      {view !== 'leave' && <section className="task-tools" aria-label="Task filters">
+      {view !== 'leave' && view !== 'board' && <section className="task-tools" aria-label="Task filters">
         <label className="search-box">
           <Search size={18} />
           <input
@@ -664,12 +699,23 @@ function App() {
           <TaskList tasks={mine} onEdit={openEdit} onStatus={quickStatus} onDelete={removeTask} />
         )}
 
+        {view === 'board' && (
+          <PlanningBoard
+            profiles={profiles}
+            tasks={tasks}
+            leaves={leavePeriods}
+            weekStart={weekStart}
+            onAssign={openNewFor}
+            onEdit={openEdit}
+          />
+        )}
+
         {view === 'leave' && (
           <LeavePage leaves={leavePeriods} onAdd={() => openLeave()} onEdit={editLeave} onDelete={deleteLeave} canDelete={profile?.role === 'admin'} />
         )}
       </main>
 
-      <div className="fab-stack">{view === 'leave' ? <button className="fab leave-fab" onClick={() => openLeave()} aria-label="Add leave"><Palmtree /></button> : <button className="fab" onClick={() => openNew()} aria-label="Add task"><Plus /></button>}</div>
+      <div className="fab-stack">{view === 'board' ? null : view === 'leave' ? <button className="fab leave-fab" onClick={() => openLeave()} aria-label="Add leave"><Palmtree /></button> : <button className="fab" onClick={() => openNew()} aria-label="Add task"><Plus /></button>}</div>
 
       <nav className="bottom-nav">
         <button className={view === 'day' ? 'active' : ''} onClick={() => setView('day')}>
@@ -680,6 +726,9 @@ function App() {
         </button>
         <button className={view === 'mine' ? 'active' : ''} onClick={() => setView('mine')}>
           <UserRound size={20} /><span>My Tasks</span>
+        </button>
+        <button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}>
+          <LayoutGrid size={20} /><span>Board</span>
         </button>
         <button className={view === 'leave' ? 'active' : ''} onClick={() => setView('leave')}>
           <Palmtree size={20} /><span>Leave</span>
@@ -1032,6 +1081,12 @@ function TaskModal({
 
         <div className="form-grid">
           <label>
+            Entry Type
+            <select value={form.task_kind} onChange={(e) => setForm({ ...form, task_kind: e.target.value as TaskKind })}>
+              {Object.entries(TASK_KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <label>
             Start Date *
             <input type="date" value={form.task_date} onChange={(e) => setForm({ ...form, task_date: e.target.value, end_date: form.end_date < e.target.value ? e.target.value : form.end_date })} required />
           </label>
@@ -1105,6 +1160,126 @@ function formatTaskTime(task: Task, day?: string) {
   if (day === task.task_date) return start ? `${start} → next day` : 'Starts'
   if (day === task.end_date) return end ? `continued → ${end}` : 'Ends'
   return 'Continues'
+}
+
+
+type BoardCell = { profile: Profile; date: Date; tasks: Task[]; leave: LeavePeriod | null }
+
+function PlanningBoard({
+  profiles,
+  tasks,
+  leaves,
+  weekStart,
+  onAssign,
+  onEdit,
+}: {
+  profiles: Profile[]
+  tasks: Task[]
+  leaves: LeavePeriod[]
+  weekStart: Date
+  onAssign: (profile: Profile, date: Date) => void
+  onEdit: (task: Task) => void
+}) {
+  const [selected, setSelected] = useState<BoardCell | null>(null)
+  const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index))
+  const orderedProfiles = [...profiles].sort((a, b) => Number(a.username.split('-')[1]) - Number(b.username.split('-')[1]))
+
+  function belongsTo(task: Task, profileId: string) {
+    return task.owner_id === profileId || Boolean(task.assignees?.some((item) => item.id === profileId))
+  }
+
+  function cellFor(person: Profile, date: Date): BoardCell {
+    const iso = toIsoDate(date)
+    return {
+      profile: person,
+      date,
+      tasks: tasks.filter((task) => belongsTo(task, person.id) && task.task_date <= iso && task.end_date >= iso && !['cancelled'].includes(task.status)),
+      leave: leaves.find((leave) => leave.profile_id === person.id && leave.start_date <= iso && leave.end_date >= iso) || null,
+    }
+  }
+
+  function cellClass(cell: BoardCell) {
+    const normalCount = cell.tasks.filter((task) => (task.task_kind || 'task') === 'task' && task.status !== 'completed').length
+    if (cell.leave) return 'board-cell is-leave'
+    if (normalCount >= 5) return 'board-cell load-high'
+    if (normalCount >= 3) return 'board-cell load-medium'
+    if (normalCount >= 1) return 'board-cell load-low'
+    return 'board-cell is-free'
+  }
+
+  function CellContent({ cell }: { cell: BoardCell }) {
+    const duty = cell.tasks.some((task) => task.task_kind === 'duty')
+    const standby = cell.tasks.some((task) => task.task_kind === 'standby')
+    const normal = cell.tasks.filter((task) => (task.task_kind || 'task') === 'task' && task.status !== 'cancelled')
+    return <>
+      <span className="board-icons" aria-label={`${cell.profile.username} ${toIsoDate(cell.date)}`}>
+        {cell.leave && <span title="Leave">🟥</span>}
+        {!cell.leave && duty && <span title="Duty">🟦</span>}
+        {!cell.leave && standby && <span title="Stand By">🟪</span>}
+        {normal.slice(0, 4).map((task) => <span key={task.id} title={task.title}>📋</span>)}
+        {normal.length > 4 && <small>+{normal.length - 4}</small>}
+        {!cell.leave && !duty && !standby && normal.length === 0 && <span className="free-mark">—</span>}
+      </span>
+    </>
+  }
+
+  return <section className="planning-board" aria-label="Weekly planning board">
+    <div className="board-legend" aria-label="Board legend">
+      <strong>Legend</strong>
+      <span>🟦 Duty</span>
+      <span>🟪 Stand By</span>
+      <span>🟥 Leave</span>
+      <span>📋 Task</span>
+      <span>— Free</span>
+    </div>
+    <p className="board-help">Tap a cell to see the day and assign a task. The employee column and day header stay visible while scrolling.</p>
+    <div className="board-scroll">
+      <div className="board-grid" style={{ gridTemplateColumns: `76px repeat(7, minmax(58px, 1fr)) 48px` }}>
+        <div className="board-corner">IMP</div>
+        {days.map((date) => <div className={`board-day ${isSameDay(date, new Date()) ? 'is-today' : ''}`} key={toIsoDate(date)}>
+          <strong>{date.toLocaleDateString('en-GB', { weekday: 'short' })}</strong>
+          <small>{date.getDate()}</small>
+        </div>)}
+        <div className="board-total-head">Σ</div>
+
+        {orderedProfiles.map((person) => {
+          const cells = days.map((date) => cellFor(person, date))
+          const weeklyNormalTasks = new Set(cells.flatMap((cell) => cell.tasks.filter((task) => (task.task_kind || 'task') === 'task').map((task) => task.id))).size
+          return <div className="board-row-contents" key={person.id} style={{ display: 'contents' }}>
+            <div className="board-person">{person.username}</div>
+            {cells.map((cell) => <button
+              type="button"
+              className={cellClass(cell)}
+              key={`${person.id}-${toIsoDate(cell.date)}`}
+              onClick={() => setSelected(cell)}
+              aria-label={`Open ${person.username}, ${formatLongDay(cell.date)}`}
+            ><CellContent cell={cell} /></button>)}
+            <div className="board-total">{weeklyNormalTasks}</div>
+          </div>
+        })}
+      </div>
+    </div>
+
+    {selected && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null) }}>
+      <section className="task-modal board-detail-modal">
+        <header>
+          <div><h2>{selected.profile.username}</h2><p>{formatLongDay(selected.date)}</p></div>
+          <button type="button" onClick={() => setSelected(null)}><X /></button>
+        </header>
+        {selected.leave && <div className="board-detail-status leave-status">🟥 {LEAVE_LABELS[selected.leave.leave_type]}</div>}
+        {selected.tasks.length ? <div className="board-detail-list">
+          {selected.tasks.map((task) => <button type="button" key={task.id} onClick={() => { setSelected(null); onEdit(task) }}>
+            <span>{task.task_kind === 'duty' ? '🟦' : task.task_kind === 'standby' ? '🟪' : '📋'}</span>
+            <div><strong>{task.title}</strong><small>{formatTaskTime(task, toIsoDate(selected.date))}</small></div>
+            <ChevronRight size={18} />
+          </button>)}
+        </div> : <div className="empty-state compact-empty">No entries for this day.</div>}
+        <footer className="single-action-footer">
+          <button className="primary-button" type="button" onClick={() => { const { profile, date } = selected; setSelected(null); onAssign(profile, date) }}><Plus size={18} /> Assign task</button>
+        </footer>
+      </section>
+    </div>}
+  </section>
 }
 
 function LeavePage({ leaves, onAdd, onEdit, onDelete, canDelete }: { leaves: LeavePeriod[]; onAdd: () => void; onEdit: (leave: LeavePeriod) => void; onDelete: (leave: LeavePeriod) => void; canDelete: boolean }) {

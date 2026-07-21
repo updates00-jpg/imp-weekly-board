@@ -397,3 +397,76 @@ legend { font-weight: 900; padding: 0 7px; }
 .icon-action { width: 36px; height: 36px; border: 1px solid #a9d8c1; border-radius: 9px; background: #fff; color: #215c44; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 .icon-action.danger { color: #b42318; border-color: #f1b5b0; }
 .icon-action:active { transform: scale(.96); }
+
+/* v2.5: compact weekly planning board */
+.bottom-nav { grid-template-columns: repeat(5, 1fr); padding-left: 8px; padding-right: 8px; }
+.bottom-nav button { min-width: 0; }
+.bottom-nav button span { white-space: nowrap; font-size: .66rem; }
+.planning-board { display: grid; gap: 10px; padding-bottom: 10px; }
+.board-legend {
+  position: sticky; top: 0; z-index: 8;
+  display: flex; align-items: center; gap: 10px; overflow-x: auto;
+  padding: 10px 11px; border: 1px solid #dbe3ee; border-radius: 14px;
+  background: rgba(255,255,255,.96); box-shadow: 0 3px 12px rgba(15,23,42,.05);
+  font-size: .72rem; white-space: nowrap; scrollbar-width: thin;
+}
+.board-legend strong { color: #0f172a; }
+.board-legend span { color: #475569; font-weight: 800; }
+.board-help { margin: 0 2px; color: #64748b; font-size: .75rem; line-height: 1.35; }
+.board-scroll { overflow: auto; max-height: calc(100dvh - 235px); border: 1px solid #dbe3ee; border-radius: 15px; background: white; }
+.board-grid { display: grid; min-width: 590px; }
+.board-corner, .board-day, .board-total-head {
+  position: sticky; top: 0; z-index: 5; min-height: 48px;
+  display: grid; place-items: center; border-bottom: 1px solid #cbd5e1; border-right: 1px solid #e2e8f0;
+  background: #f8fafc; font-size: .72rem;
+}
+.board-corner { left: 0; z-index: 7; font-weight: 900; }
+.board-day { gap: 1px; align-content: center; }
+.board-day strong { text-transform: uppercase; font-size: .68rem; }
+.board-day small { color: #64748b; }
+.board-day.is-today { background: #dbeafe; color: #1d4ed8; }
+.board-total-head { font-size: .9rem; font-weight: 900; }
+.board-person {
+  position: sticky; left: 0; z-index: 4; min-height: 48px;
+  display: flex; align-items: center; padding: 0 7px;
+  border-right: 1px solid #cbd5e1; border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc; font-size: .71rem; font-weight: 900;
+}
+.board-cell {
+  min-width: 58px; min-height: 48px; padding: 3px 2px;
+  border: 0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;
+  display: grid; place-items: center; background: white;
+}
+.board-cell:focus-visible { outline: 3px solid rgba(37,99,235,.42); outline-offset: -3px; }
+.board-cell.load-low { background: #f0fdf4; }
+.board-cell.load-medium { background: #fffbeb; }
+.board-cell.load-high { background: #fef2f2; }
+.board-cell.is-leave { background: #f1f5f9; }
+.board-cell.is-free { background: white; }
+.board-icons { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0; max-width: 54px; line-height: 1; font-size: .84rem; }
+.board-icons small { font-size: .6rem; font-weight: 900; color: #475569; margin-left: 1px; }
+.free-mark { color: #94a3b8; font-size: 1rem; font-weight: 900; }
+.board-total {
+  min-height: 48px; display: grid; place-items: center;
+  border-bottom: 1px solid #e2e8f0; background: #f8fafc;
+  font-size: .75rem; font-weight: 900; color: #334155;
+}
+.board-detail-modal header p { margin: 3px 0 0; color: #64748b; font-size: .82rem; }
+.board-detail-status { padding: 11px 12px; border-radius: 12px; font-weight: 850; margin-bottom: 10px; }
+.leave-status { background: #f1f5f9; color: #475569; }
+.board-detail-list { display: grid; gap: 8px; }
+.board-detail-list > button {
+  width: 100%; border: 1px solid #e2e8f0; border-radius: 13px; background: white;
+  padding: 11px; display: grid; grid-template-columns: 26px 1fr 20px; align-items: center; gap: 8px; text-align: left;
+}
+.board-detail-list > button div { min-width: 0; display: grid; gap: 3px; }
+.board-detail-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-detail-list small { color: #64748b; }
+.compact-empty { padding: 22px 10px; }
+.single-action-footer { grid-template-columns: 1fr !important; margin-top: 14px; }
+.single-action-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+
+@media (max-width: 360px) {
+  .bottom-nav button span { font-size: .59rem; }
+  .bottom-nav svg { width: 18px; height: 18px; }
+}
