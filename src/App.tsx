@@ -33,6 +33,7 @@ const EMPTY_FORM: TaskFormData = {
   end_date: toIsoDate(new Date()),
   start_time: '',
   end_time: '',
+  ends_next_day: false,
   status: 'scheduled',
   priority: 'normal',
   task_kind: 'task',
@@ -54,11 +55,50 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
 
 const TASK_KIND_LABELS: Record<TaskKind, string> = { task: 'Task', duty: 'Duty', standby: 'Stand By' }
 
+
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
   low: 'Low',
   normal: 'Normal',
   high: 'High',
   urgent: 'Urgent',
+}
+
+function addIsoDays(isoDate: string, days: number): string {
+  const [year, month, day] = isoDate.split('-').map(Number)
+  return toIsoDate(new Date(year, month - 1, day + days, 12))
+}
+
+function localTimestamp(date: string, time: string, endBoundary = false): number {
+  const [year, month, day] = date.split('-').map(Number)
+  const normalizedTime = time || (endBoundary ? '23:59:59' : '00:00:00')
+  const [hour = 0, minute = 0, second = 0] = normalizedTime.split(':').map(Number)
+  return new Date(year, month - 1, day, hour, minute, second, endBoundary && !time ? 999 : 0).getTime()
+}
+
+function intervalFor(entry: Pick<Task, 'task_date' | 'end_date' | 'start_time' | 'end_time'> | TaskFormData) {
+  const start = localTimestamp(entry.task_date, entry.start_time || '', false)
+  let end = localTimestamp(entry.end_date || entry.task_date, entry.end_time || '', true)
+  // A zero-length explicit interval is invalid, but keep comparisons stable while editing.
+  if (end < start) end = start
+  return { start, end }
+}
+
+function intervalsOverlap(
+  left: Pick<Task, 'task_date' | 'end_date' | 'start_time' | 'end_time'> | TaskFormData,
+  right: Pick<Task, 'task_date' | 'end_date' | 'start_time' | 'end_time'> | TaskFormData,
+): boolean {
+  const a = intervalFor(left)
+  const b = intervalFor(right)
+  // Strict comparison allows one duty to start exactly when another one ends.
+  return a.start < b.end && b.start < a.end
+}
+
+function taskOccursOnDate(task: Task, isoDate: string): boolean {
+  const [year, month, day] = isoDate.split('-').map(Number)
+  const dayStart = new Date(year, month - 1, day, 0, 0, 0, 0).getTime()
+  const nextDayStart = new Date(year, month - 1, day + 1, 0, 0, 0, 0).getTime()
+  const interval = intervalFor(task)
+  return interval.start < nextDayStart && interval.end > dayStart
 }
 
 function App() {
@@ -347,6 +387,7 @@ function App() {
       end_date: task.end_date || task.task_date,
       start_time: task.start_time?.slice(0, 5) || '',
       end_time: task.end_time?.slice(0, 5) || '',
+      ends_next_day: (task.end_date || task.task_date) === addIsoDays(task.task_date, 1),
       status: task.status,
       priority: task.priority,
       task_kind: task.task_kind || 'task',
@@ -365,8 +406,13 @@ function App() {
       return
     }
     if (form.end_date < form.task_date) { setMessage('End date cannot be before start date.'); return }
-    if (form.end_date === form.task_date && form.end_time && form.start_time && form.end_time <= form.start_time) {
-      setMessage('For a same-day task, end time must be later than start time.')
+    if (form.task_kind !== 'task' && (!form.start_time || !form.end_time)) {
+      setMessage('Duty and Stand By require both a start time and an end time.')
+      return
+    }
+    const formInterval = intervalFor(form)
+    if (formInterval.end <= formInterval.start) {
+      setMessage('End date and time must be later than start date and time.')
       return
     }
     if (form.task_kind !== 'task') {
@@ -375,12 +421,12 @@ function App() {
       const conflict = personalTasks.some((task) => {
         if (editing && task.id === editing.id) return false
         if (task.task_kind !== opposite || task.deleted_at) return false
-        const overlaps = task.task_date <= form.end_date && task.end_date >= form.task_date
+        if (!intervalsOverlap(task, form)) return false
         const taskPeople = new Set([task.owner_id, ...(task.assignees || []).map((item) => item.id)].filter(Boolean) as string[])
-        return overlaps && [...selectedPeople].some((id) => taskPeople.has(id))
+        return [...selectedPeople].some((id) => taskPeople.has(id))
       })
       if (conflict) {
-        setMessage('Duty and Stand By cannot be assigned to the same person on the same day.')
+        setMessage('Duty and Stand By cannot overlap for the same person.')
         return
       }
     }
@@ -426,7 +472,7 @@ function App() {
         if (insertError) throw insertError
       }
 
-      await loadTasks()
+      await Promise.all([loadTasks(), loadPersonalTasks(), profile.role === 'admin' ? loadAdminTasks() : Promise.resolve()])
       setFormOpen(false)
       setMessage(editing ? 'Task changes saved.' : 'Task created.')
     } catch (error) {
@@ -567,13 +613,13 @@ function App() {
 
     if (!matchesSearch) return false
     if (filter === 'mine') return task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id)
-    if (filter === 'today') return task.task_date <= todayIso && task.end_date >= todayIso
+    if (filter === 'today') return taskOccursOnDate(task, todayIso)
     if (filter === 'overdue') return !['completed', 'cancelled'].includes(task.status) && task.end_date < todayIso
     if (filter === 'done') return task.status === 'completed'
     return true
   })
   const selectedIso = toIsoDate(selectedDate)
-  const dayTasks = filteredTasks.filter((task) => task.task_date <= selectedIso && task.end_date >= selectedIso)
+  const dayTasks = filteredTasks.filter((task) => taskOccursOnDate(task, selectedIso))
   const dayLeaves = leavePeriods.filter((leave) => leave.start_date <= selectedIso && leave.end_date >= selectedIso)
   const mine = filteredTasks.filter(
     (task) => task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id),
@@ -582,9 +628,9 @@ function App() {
     (task) => task.owner_id === profile?.id || task.assignees?.some((item) => item.id === profile?.id),
   )
   const myDayStats = {
-    today: myVisibleTasks.filter((task) => task.task_date <= todayIso && task.end_date >= todayIso && !['completed', 'cancelled'].includes(task.status)).length,
+    today: myVisibleTasks.filter((task) => taskOccursOnDate(task, todayIso) && !['completed', 'cancelled'].includes(task.status)).length,
     overdue: myVisibleTasks.filter((task) => task.end_date < todayIso && !['completed', 'cancelled'].includes(task.status)).length,
-    completedToday: myVisibleTasks.filter((task) => task.task_date <= todayIso && task.end_date >= todayIso && task.status === 'completed').length,
+    completedToday: myVisibleTasks.filter((task) => taskOccursOnDate(task, todayIso) && task.status === 'completed').length,
     nextTask: myVisibleTasks
       .filter((task) => task.task_date >= todayIso && !['completed', 'cancelled'].includes(task.status))
       .sort((a, b) => `${a.task_date} ${a.start_time || '23:59'}`.localeCompare(`${b.task_date} ${b.start_time || '23:59'}`))[0] || null,
@@ -690,7 +736,7 @@ function App() {
             {Array.from({ length: 7 }, (_, index) => {
               const date = addDays(weekStart, index)
               const dateIso = toIsoDate(date)
-              const items = filteredTasks.filter((task) => task.task_date <= dateIso && task.end_date >= dateIso)
+              const items = filteredTasks.filter((task) => taskOccursOnDate(task, dateIso))
               const leaves = leavePeriods.filter((leave) => leave.start_date <= dateIso && leave.end_date >= dateIso)
               return (
                 <section className={`day-section ${isSameDay(date, new Date()) ? 'is-today' : ''}`} key={toIsoDate(date)}>
@@ -1100,7 +1146,19 @@ function TaskModal({
           </label>
           <label>
             Start Date *
-            <input type="date" value={form.task_date} onChange={(e) => setForm({ ...form, task_date: e.target.value, end_date: form.end_date < e.target.value ? e.target.value : form.end_date })} required />
+            <input
+              type="date"
+              value={form.task_date}
+              onChange={(e) => {
+                const taskDate = e.target.value
+                setForm({
+                  ...form,
+                  task_date: taskDate,
+                  end_date: form.ends_next_day ? addIsoDays(taskDate, 1) : (form.end_date < taskDate ? taskDate : form.end_date),
+                })
+              }}
+              required
+            />
           </label>
           <label>
             Start Time
@@ -1108,10 +1166,25 @@ function TaskModal({
           </label>
           <label>
             End Date *
-            <input type="date" value={form.end_date} min={form.task_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} required />
+            <input
+              type="date"
+              value={form.end_date}
+              min={form.task_date}
+              disabled={form.ends_next_day}
+              onChange={(e) => setForm({ ...form, end_date: e.target.value, ends_next_day: e.target.value === addIsoDays(form.task_date, 1) })}
+              required
+            />
           </label>
           <label className="check-label next-day-check">
-            <input type="checkbox" checked={form.end_date === toIsoDate(addDays(new Date(`${form.task_date}T12:00:00`), 1))} onChange={(e) => setForm({ ...form, end_date: e.target.checked ? toIsoDate(addDays(new Date(`${form.task_date}T12:00:00`), 1)) : form.task_date })} />
+            <input
+              type="checkbox"
+              checked={form.ends_next_day}
+              onChange={(e) => setForm({
+                ...form,
+                ends_next_day: e.target.checked,
+                end_date: e.target.checked ? addIsoDays(form.task_date, 1) : form.task_date,
+              })}
+            />
             <span>Ends next day</span>
           </label>
           <label>
@@ -1205,7 +1278,7 @@ function PlanningBoard({
     return {
       profile: person,
       date,
-      tasks: tasks.filter((task) => belongsTo(task, person.id) && task.task_date <= iso && task.end_date >= iso && !['cancelled'].includes(task.status)),
+      tasks: tasks.filter((task) => belongsTo(task, person.id) && taskOccursOnDate(task, iso) && !['cancelled'].includes(task.status)),
       leave: leaves.find((leave) => leave.profile_id === person.id && leave.start_date <= iso && leave.end_date >= iso) || null,
     }
   }
