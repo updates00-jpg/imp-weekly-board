@@ -105,7 +105,7 @@ function taskOccursOnDate(task: Task, isoDate: string): boolean {
 
 async function compressTaskPhoto(file: File): Promise<Blob> {
   if (!file.type.startsWith('image/')) throw new Error('Select an image file.')
-  if (file.size > 30 * 1024 * 1024) throw new Error('The original photo is too large (maximum 30 MB).')
+  if (file.size > 35 * 1024 * 1024) throw new Error('The original photo is too large (maximum 35 MB).')
 
   const objectUrl = URL.createObjectURL(file)
   try {
@@ -116,23 +116,29 @@ async function compressTaskPhoto(file: File): Promise<Blob> {
       img.src = objectUrl
     })
 
-    const targetBytes = 1.75 * 1024 * 1024
-    const maxSides = [1600, 1400, 1200, 1000, 850, 700]
-    const qualities = [0.82, 0.72, 0.62, 0.52, 0.44]
+    // JPEG encoding is intentionally used here because iOS/Safari is more
+    // predictable with canvas JPEG output than WebP encoding.
+    const targetBytes = 3.2 * 1024 * 1024
+    const maxSides = [1600, 1400, 1200, 1000, 850, 700, 600]
+    const qualities = [0.82, 0.72, 0.62, 0.52, 0.42, 0.34]
 
-    const renderBlob = async (maxSide: number, quality: number): Promise<Blob> => {
+    const renderJpeg = async (maxSide: number, quality: number): Promise<Blob> => {
       const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight))
       const canvas = document.createElement('canvas')
       canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
       canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
       const context = canvas.getContext('2d')
       if (!context) throw new Error('Could not prepare the photo.')
+
+      // JPEG has no alpha channel; fill white first so transparent PNGs do not turn black.
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, canvas.width, canvas.height)
       context.drawImage(image, 0, 0, canvas.width, canvas.height)
 
       return new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
           (blob) => blob ? resolve(blob) : reject(new Error('Could not compress the photo.')),
-          'image/webp',
+          'image/jpeg',
           quality,
         )
       })
@@ -141,19 +147,18 @@ async function compressTaskPhoto(file: File): Promise<Blob> {
     let smallest: Blob | null = null
     for (const maxSide of maxSides) {
       for (const quality of qualities) {
-        const blob = await renderBlob(maxSide, quality)
+        const blob = await renderJpeg(maxSide, quality)
         if (!smallest || blob.size < smallest.size) smallest = blob
         if (blob.size <= targetBytes) return blob
       }
     }
 
-    if (smallest && smallest.size <= 2 * 1024 * 1024) return smallest
-    throw new Error('This photo could not be reduced below 2 MB. Please choose another image.')
+    if (smallest && smallest.size <= 4 * 1024 * 1024) return smallest
+    throw new Error('This photo could not be reduced below 4 MB. Please choose another image.')
   } finally {
     URL.revokeObjectURL(objectUrl)
   }
 }
-
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -581,10 +586,10 @@ function App() {
       const previousImagePath = editing?.image_path || null
       if (taskPhotoFile) {
         const compressed = await compressTaskPhoto(taskPhotoFile)
-        const storagePath = `${taskId}/${crypto.randomUUID()}.webp`
+        const storagePath = `${taskId}/${crypto.randomUUID()}.jpg`
         const { error: uploadError } = await supabase.storage
           .from('task-images')
-          .upload(storagePath, compressed, { contentType: 'image/webp', cacheControl: '3600', upsert: false })
+          .upload(storagePath, compressed, { contentType: 'image/jpeg', cacheControl: '3600', upsert: false })
         if (uploadError) throw new Error(`Task saved, but photo upload failed: ${uploadError.message}`)
 
         const { error: photoUpdateError } = await supabase.from('tasks').update({ image_path: storagePath }).eq('id', taskId)
