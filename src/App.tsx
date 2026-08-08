@@ -105,7 +105,7 @@ function taskOccursOnDate(task: Task, isoDate: string): boolean {
 
 async function compressTaskPhoto(file: File): Promise<Blob> {
   if (!file.type.startsWith('image/')) throw new Error('Select an image file.')
-  if (file.size > 15 * 1024 * 1024) throw new Error('The original photo is too large (maximum 15 MB).')
+  if (file.size > 30 * 1024 * 1024) throw new Error('The original photo is too large (maximum 30 MB).')
 
   const objectUrl = URL.createObjectURL(file)
   try {
@@ -116,23 +116,39 @@ async function compressTaskPhoto(file: File): Promise<Blob> {
       img.src = objectUrl
     })
 
-    const maxSide = 1600
-    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
-    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('Could not prepare the photo.')
-    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+    const targetBytes = 1.75 * 1024 * 1024
+    const maxSides = [1600, 1400, 1200, 1000, 850, 700]
+    const qualities = [0.82, 0.72, 0.62, 0.52, 0.44]
 
-    const toBlob = (quality: number) => new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not compress the photo.')), 'image/webp', quality)
-    })
+    const renderBlob = async (maxSide: number, quality: number): Promise<Blob> => {
+      const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Could not prepare the photo.')
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
 
-    let blob = await toBlob(0.8)
-    if (blob.size > 2 * 1024 * 1024) blob = await toBlob(0.65)
-    if (blob.size > 2 * 1024 * 1024) throw new Error('The compressed photo is still larger than 2 MB. Try a smaller image.')
-    return blob
+      return new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => blob ? resolve(blob) : reject(new Error('Could not compress the photo.')),
+          'image/webp',
+          quality,
+        )
+      })
+    }
+
+    let smallest: Blob | null = null
+    for (const maxSide of maxSides) {
+      for (const quality of qualities) {
+        const blob = await renderBlob(maxSide, quality)
+        if (!smallest || blob.size < smallest.size) smallest = blob
+        if (blob.size <= targetBytes) return blob
+      }
+    }
+
+    if (smallest && smallest.size <= 2 * 1024 * 1024) return smallest
+    throw new Error('This photo could not be reduced below 2 MB. Please choose another image.')
   } finally {
     URL.revokeObjectURL(objectUrl)
   }
