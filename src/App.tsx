@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   CalendarDays,
   Camera,
@@ -1138,6 +1139,7 @@ function Login({ users }: { users: string[] }) {
 
 function TaskPhoto({ path, compact = false }: { path: string; compact?: boolean }) {
   const [url, setUrl] = useState<string>('')
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -1148,8 +1150,76 @@ function TaskPhoto({ path, compact = false }: { path: string; compact?: boolean 
     return () => { active = false }
   }, [path])
 
+  useEffect(() => {
+    if (!open) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
   if (!url) return <div className={`task-photo-placeholder ${compact ? 'compact' : ''}`}><ImageIcon size={20} /></div>
-  return <img className={`task-photo ${compact ? 'compact' : ''}`} src={url} alt="Task attachment" loading="lazy" />
+
+  return (
+    <>
+      <img
+        className={`task-photo ${compact ? 'compact' : ''}`}
+        src={url}
+        alt="Task attachment"
+        loading="lazy"
+        role="button"
+        tabIndex={0}
+        aria-label="Open task photo full screen"
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          setOpen(true)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            event.stopPropagation()
+            setOpen(true)
+          }
+        }}
+      />
+      {open && createPortal(
+        <div
+          className="photo-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Task photo"
+          onClick={() => setOpen(false)}
+        >
+          <button
+            type="button"
+            className="photo-lightbox-close"
+            aria-label="Close photo"
+            onClick={(event) => {
+              event.stopPropagation()
+              setOpen(false)
+            }}
+          >
+            <X size={25} />
+          </button>
+          <img
+            className="photo-lightbox-image"
+            src={url}
+            alt="Task attachment full size"
+            onClick={(event) => event.stopPropagation()}
+          />
+          <div className="photo-lightbox-hint">Tap outside the photo to close</div>
+        </div>,
+        document.body,
+      )}
+    </>
+  )
 }
 
 function LocalPhotoPreview({ file }: { file: File }) {
