@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CalendarDays,
+  Camera,
+  Image as ImageIcon,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -101,6 +103,41 @@ function taskOccursOnDate(task: Task, isoDate: string): boolean {
   return interval.start < nextDayStart && interval.end > dayStart
 }
 
+async function compressTaskPhoto(file: File): Promise<Blob> {
+  if (!file.type.startsWith('image/')) throw new Error('Select an image file.')
+  if (file.size > 15 * 1024 * 1024) throw new Error('The original photo is too large (maximum 15 MB).')
+
+  const objectUrl = URL.createObjectURL(file)
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('Could not read this photo.'))
+      img.src = objectUrl
+    })
+
+    const maxSide = 1600
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Could not prepare the photo.')
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    const toBlob = (quality: number) => new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not compress the photo.')), 'image/webp', quality)
+    })
+
+    let blob = await toBlob(0.8)
+    if (blob.size > 2 * 1024 * 1024) blob = await toBlob(0.65)
+    if (blob.size > 2 * 1024 * 1024) throw new Error('The compressed photo is still larger than 2 MB. Try a smaller image.')
+    return blob
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -127,6 +164,8 @@ function App() {
   const [editingLeave, setEditingLeave] = useState<LeavePeriod | null>(null)
   const [leaveForm, setLeaveForm] = useState<LeaveFormData>(EMPTY_LEAVE)
   const [filter, setFilter] = useState<'all' | 'mine' | 'today' | 'overdue' | 'done'>('all')
+  const [taskPhotoFile, setTaskPhotoFile] = useState<File | null>(null)
+  const [removeTaskPhoto, setRemoveTaskPhoto] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -212,6 +251,7 @@ function App() {
         created_at,
         updated_at,
         deleted_at,
+        image_path,
         owner:profiles!tasks_owner_id_fkey(id, username, role, active),
         task_assignees(profile:profiles(id, username, role, active))
       `)
@@ -375,6 +415,8 @@ function App() {
 
   function openNew(date = selectedDate) {
     setEditing(null)
+    setTaskPhotoFile(null)
+    setRemoveTaskPhoto(false)
     setForm({
       ...EMPTY_FORM,
       task_date: toIsoDate(date),
@@ -387,6 +429,8 @@ function App() {
 
   function openNewFor(target: Profile, date: Date) {
     setEditing(null)
+    setTaskPhotoFile(null)
+    setRemoveTaskPhoto(false)
     const iso = toIsoDate(date)
     setForm({
       ...EMPTY_FORM,
@@ -449,6 +493,8 @@ function App() {
 
   function openEdit(task: Task) {
     setEditing(task)
+    setTaskPhotoFile(null)
+    setRemoveTaskPhoto(false)
     setForm({
       title: task.title,
       description: task.description || '',
@@ -514,6 +560,29 @@ function App() {
           form.assignee_ids.map((profileId) => ({ task_id: taskId, profile_id: profileId })),
         )
         if (insertError) throw insertError
+      }
+
+      const previousImagePath = editing?.image_path || null
+      if (taskPhotoFile) {
+        const compressed = await compressTaskPhoto(taskPhotoFile)
+        const storagePath = `${taskId}/${crypto.randomUUID()}.webp`
+        const { error: uploadError } = await supabase.storage
+          .from('task-images')
+          .upload(storagePath, compressed, { contentType: 'image/webp', cacheControl: '3600', upsert: false })
+        if (uploadError) throw new Error(`Task saved, but photo upload failed: ${uploadError.message}`)
+
+        const { error: photoUpdateError } = await supabase.from('tasks').update({ image_path: storagePath }).eq('id', taskId)
+        if (photoUpdateError) {
+          await supabase.storage.from('task-images').remove([storagePath])
+          throw photoUpdateError
+        }
+        if (previousImagePath && previousImagePath !== storagePath) {
+          await supabase.storage.from('task-images').remove([previousImagePath])
+        }
+      } else if (removeTaskPhoto && previousImagePath) {
+        const { error: photoUpdateError } = await supabase.from('tasks').update({ image_path: null }).eq('id', taskId)
+        if (photoUpdateError) throw photoUpdateError
+        await supabase.storage.from('task-images').remove([previousImagePath])
       }
 
       await Promise.all([loadTasks(), loadPersonalTasks(), profile.role === 'admin' ? loadAdminTasks() : Promise.resolve()])
@@ -638,8 +707,12 @@ function App() {
       setMessage(error.message)
       return
     }
+    if (task.image_path) {
+      const { error: storageError } = await supabase.storage.from('task-images').remove([task.image_path])
+      if (storageError) setMessage(`Task deleted, but photo cleanup failed: ${storageError.message}`)
+    }
     setArchivedTasks((current) => current.filter((item) => item.id !== task.id))
-    setMessage('Task permanently deleted.')
+    if (!task.image_path) setMessage('Task permanently deleted.')
   }
 
   if (loading) return <div className="splash">Loading…</div>
@@ -857,6 +930,10 @@ function App() {
           onClose={() => setFormOpen(false)}
           onSubmit={saveTask}
           saving={saving}
+          photoFile={taskPhotoFile}
+          setPhotoFile={(file) => { setTaskPhotoFile(file); if (file) setRemoveTaskPhoto(false) }}
+          removePhoto={removeTaskPhoto}
+          setRemovePhoto={(remove) => { setRemoveTaskPhoto(remove); if (remove) setTaskPhotoFile(null) }}
         />
       )}
 
@@ -1038,6 +1115,32 @@ function Login({ users }: { users: string[] }) {
   )
 }
 
+function TaskPhoto({ path, compact = false }: { path: string; compact?: boolean }) {
+  const [url, setUrl] = useState<string>('')
+
+  useEffect(() => {
+    let active = true
+    supabase.storage.from('task-images').createSignedUrl(path, 60 * 60).then(({ data, error }) => {
+      if (!active) return
+      if (!error && data?.signedUrl) setUrl(data.signedUrl)
+    })
+    return () => { active = false }
+  }, [path])
+
+  if (!url) return <div className={`task-photo-placeholder ${compact ? 'compact' : ''}`}><ImageIcon size={20} /></div>
+  return <img className={`task-photo ${compact ? 'compact' : ''}`} src={url} alt="Task attachment" loading="lazy" />
+}
+
+function LocalPhotoPreview({ file }: { file: File }) {
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file)
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [file])
+  return url ? <img className="task-photo-editor-preview" src={url} alt="Selected task photo" /> : null
+}
+
 function TaskList({
   tasks,
   compact = false,
@@ -1064,6 +1167,7 @@ function TaskList({
               <span className="time">{formatTaskTime(task, selectedDate)}</span>
             </div>
             <h2>{task.title}</h2>
+            {task.image_path && <TaskPhoto path={task.image_path} compact={compact} />}
             {!compact && task.description && <p>{task.description}</p>}
             <div className="task-meta">
               <span>{STATUS_LABELS[task.status]}</span>
@@ -1136,6 +1240,10 @@ function TaskModal({
   onClose,
   onSubmit,
   saving,
+  photoFile,
+  setPhotoFile,
+  removePhoto,
+  setRemovePhoto,
 }: {
   form: TaskFormData
   setForm: (next: TaskFormData) => void
@@ -1144,6 +1252,10 @@ function TaskModal({
   onClose: () => void
   onSubmit: (event: FormEvent) => void
   saving: boolean
+  photoFile: File | null
+  setPhotoFile: (file: File | null) => void
+  removePhoto: boolean
+  setRemovePhoto: (remove: boolean) => void
 }) {
   function toggleAssignee(id: string) {
     const included = form.assignee_ids.includes(id)
@@ -1175,15 +1287,40 @@ function TaskModal({
         </label>
 
         <label>
-          Description
+          Description <span className="optional-label">Optional</span>
           <textarea
             maxLength={300}
             rows={3}
             value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
+            placeholder="Optional when the photo explains the task"
           />
           <small>{form.description.length}/300</small>
         </label>
+
+        <section className="task-photo-editor" aria-label="Task photo">
+          <div className="task-photo-editor-heading">
+            <div><strong>Photo</strong><span>Optional · maximum 1 photo</span></div>
+            <ImageIcon size={20} />
+          </div>
+
+          {photoFile ? <LocalPhotoPreview file={photoFile} /> : editing?.image_path && !removePhoto ? <TaskPhoto path={editing.image_path} /> : null}
+
+          <div className="task-photo-actions">
+            <label className="photo-picker-button camera-button">
+              <Camera size={18} /><span>Take photo</span>
+              <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => setPhotoFile(event.target.files?.[0] || null)} />
+            </label>
+            <label className="photo-picker-button">
+              <ImageIcon size={18} /><span>Gallery</span>
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPhotoFile(event.target.files?.[0] || null)} />
+            </label>
+          </div>
+
+          {(photoFile || (editing?.image_path && !removePhoto)) && <button type="button" className="remove-photo-button" onClick={() => photoFile ? setPhotoFile(null) : setRemovePhoto(true)}>Remove photo</button>}
+          {removePhoto && editing?.image_path && !photoFile && <button type="button" className="restore-photo-button" onClick={() => setRemovePhoto(false)}>Keep current photo</button>}
+          <small>Photos are compressed before upload. JPEG, PNG and WebP are supported.</small>
+        </section>
 
         <div className="form-grid">
           <label>

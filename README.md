@@ -142,3 +142,10 @@ Duty and Stand By are created from the Board using the dedicated **Add Duty / St
 ## v2.6.1 shift display fix
 
 Duty and Stand By are stored in `shifts` and displayed on the Board only on `start_date`. A shift starting on 22 July at 07:30 and ending on 23 July at 07:30 therefore belongs to the 22 July cell. This avoids false conflicts between consecutive 24-hour shifts.
+
+
+## v2.7 - Task photos
+
+Before deploying v2.7, run `supabase/migration_v2_7_task_photos.sql` once in Supabase SQL Editor.
+The migration creates a private `task-images` Storage bucket and adds `tasks.image_path`.
+Each task can have one photo. Images are compressed in the browser to WebP (max 1600 px, target <= 2 MB) before upload.
