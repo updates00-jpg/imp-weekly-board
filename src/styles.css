@@ -361,7 +361,7 @@ legend { font-weight: 900; padding: 0 7px; }
   background: white;
   box-shadow: 0 5px 18px rgba(15,23,42,.06);
 }
-.my-day-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.my-day-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .my-day-stat {
   min-width: 0;
   display: grid;
@@ -597,4 +597,72 @@ legend { font-weight: 900; padding: 0 7px; }
   font-size: .72rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+
+/* v2.9: cleaner Today homepage */
+.team-day-dashboard {
+  margin: 10px 16px 4px;
+  padding: 15px;
+  border: 1px solid #dbe3ee;
+  border-radius: 18px;
+  background: white;
+  box-shadow: 0 5px 18px rgba(15,23,42,.05);
+}
+.team-day-heading h2 { font-size: 1rem; margin-top: 3px; }
+.team-day-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+.team-day-stat {
+  min-width: 0;
+  min-height: 64px;
+  padding: 8px 3px;
+  border-radius: 12px;
+  background: #f1f5f9;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+  text-align: center;
+  color: #475569;
+}
+.team-day-stat strong { font-size: 1.12rem; line-height: 1; color: #0f172a; }
+.team-day-stat span { font-size: .58rem; line-height: 1.1; font-weight: 850; }
+.team-day-stat.duty-stat { background: #eff6ff; color: #1d4ed8; }
+.team-day-stat.duty-stat::before { content: '■'; font-size: .65rem; }
+.team-day-stat.standby-stat { background: #faf5ff; color: #7e22ce; }
+.team-day-stat.standby-stat::before { content: '■'; font-size: .65rem; }
+.team-day-stat.leave-stat { background: #fff1f2; color: #be123c; }
+.team-day-details {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+.team-day-details > div {
+  display: grid;
+  grid-template-columns: 10px 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 2px;
+}
+.team-day-details strong { font-size: .72rem; color: #334155; }
+.team-day-details small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 700;
+}
+.team-dot { width: 8px; height: 8px; border-radius: 3px; display: block; }
+.duty-dot { background: #2563eb; }
+.standby-dot { background: #9333ea; }
+.leave-dot { background: #e11d48; }
+@media (max-width: 360px) {
+  .team-day-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

@@ -820,6 +820,17 @@ function App() {
     overdue: adminTasks.filter((task) => !['completed', 'cancelled'].includes(task.status) && task.end_date < todayIso).length,
     thisWeek: tasks.length,
   } : null
+  const selectedTeamDateIso = selectedIso
+  const teamDayTasks = tasks.filter((task) => taskOccursOnDate(task, selectedTeamDateIso) && !['completed', 'cancelled'].includes(task.status))
+  const teamDayShifts = shifts.filter((shift) => shift.start_date === selectedTeamDateIso)
+  const teamDayLeaves = leavePeriods.filter((leave) => leave.start_date <= selectedTeamDateIso && leave.end_date >= selectedTeamDateIso)
+  const teamDayStats = {
+    activeTasks: teamDayTasks.length,
+    duty: teamDayShifts.filter((shift) => shift.shift_type === 'duty'),
+    standby: teamDayShifts.filter((shift) => shift.shift_type === 'standby'),
+    leave: teamDayLeaves,
+    present: Math.max(0, profiles.length - new Set(teamDayLeaves.map((leave) => leave.profile_id)).size),
+  }
 
   return (
     <div className="app-shell">
@@ -833,17 +844,19 @@ function App() {
         </button>
       </header>
 
-      <nav className="primary-view-tabs" aria-label="Main planning views">
-        <button className={view === 'mine' ? 'active' : ''} onClick={() => setView('mine')}>
-          <UserRound size={18} /><span>My Tasks</span>
-        </button>
-        <button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}>
-          <LayoutGrid size={18} /><span>Board</span>
-        </button>
-        <button className={view === 'leave' ? 'active' : ''} onClick={() => setView('leave')}>
-          <Palmtree size={18} /><span>Leave</span>
-        </button>
-      </nav>
+      {view !== 'day' && (
+        <nav className="primary-view-tabs" aria-label="Main planning views">
+          <button className={view === 'mine' ? 'active' : ''} onClick={() => setView('mine')}>
+            <UserRound size={18} /><span>My Tasks</span>
+          </button>
+          <button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}>
+            <LayoutGrid size={18} /><span>Board</span>
+          </button>
+          <button className={view === 'leave' ? 'active' : ''} onClick={() => setView('leave')}>
+            <Palmtree size={18} /><span>Leave</span>
+          </button>
+        </nav>
+      )}
 
       {message && (
         <div className="notice">
@@ -866,6 +879,13 @@ function App() {
       )}
 
       {profile && view !== 'leave' && view !== 'board' && <MyDayDashboard username={profile.username} stats={myDayStats} />}
+
+      {view === 'day' && (
+        <TeamDayDashboard
+          date={selectedDate}
+          stats={teamDayStats}
+        />
+      )}
 
       {adminStats && view !== 'leave' && view !== 'board' && (
         <AdminDashboard
@@ -1052,6 +1072,67 @@ function MyDayDashboard({
           <small>{nextLabel}</small>
         </div>
         <ChevronRight size={20} />
+      </div>
+    </section>
+  )
+}
+
+function TeamDayDashboard({
+  date,
+  stats,
+}: {
+  date: Date
+  stats: {
+    activeTasks: number
+    duty: Shift[]
+    standby: Shift[]
+    leave: LeavePeriod[]
+    present: number
+  }
+}) {
+  const isToday = isSameDay(date, new Date())
+  const dutyNames = stats.duty.map((shift) => shift.profile?.username).filter(Boolean).join(', ') || 'None'
+  const standbyNames = stats.standby.map((shift) => shift.profile?.username).filter(Boolean).join(', ') || 'None'
+  const leaveNames = stats.leave.map((leave) => leave.profile?.username).filter(Boolean).join(', ') || 'None'
+
+  return (
+    <section className="team-day-dashboard" aria-label="Team day summary">
+      <div className="dashboard-heading team-day-heading">
+        <div>
+          <span>{isToday ? 'TEAM TODAY' : 'TEAM DAY'}</span>
+          <h2>{formatLongDay(date)}</h2>
+        </div>
+        <UsersRound size={22} />
+      </div>
+      <div className="team-day-grid">
+        <div className="team-day-stat">
+          <UsersRound size={17} />
+          <strong>{stats.present}</strong>
+          <span>Present</span>
+        </div>
+        <div className="team-day-stat">
+          <ClipboardList size={17} />
+          <strong>{stats.activeTasks}</strong>
+          <span>Active tasks</span>
+        </div>
+        <div className="team-day-stat duty-stat">
+          <strong>{stats.duty.length}</strong>
+          <span>Duty</span>
+        </div>
+        <div className="team-day-stat standby-stat">
+          <strong>{stats.standby.length}</strong>
+          <span>Stand By</span>
+        </div>
+        <div className="team-day-stat leave-stat">
+          <Palmtree size={17} />
+          <strong>{stats.leave.length}</strong>
+          <span>Leave</span>
+        </div>
+      </div>
+      <div className="team-day-details">
+        <div><span className="team-dot duty-dot" /><strong>Duty</strong><small>{dutyNames}</small></div>
+        <div><span className="team-dot standby-dot" /><strong>Stand By</strong><small>{standbyNames}</small></div>
+        <div><span className="team-dot leave-dot" /><strong>Leave</strong><small>{leaveNames}</small></div>
       </div>
     </section>
   )
