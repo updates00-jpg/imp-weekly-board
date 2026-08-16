@@ -181,6 +181,7 @@ function App() {
   const [leavePeriods, setLeavePeriods] = useState<LeavePeriod[]>([])
   const [shifts, setShifts] = useState<Shift[]>([])
   const [shiftOpen, setShiftOpen] = useState(false)
+  const [editingShift, setEditingShift] = useState<Shift | null>(null)
   const [shiftForm, setShiftForm] = useState<ShiftFormData>(EMPTY_SHIFT)
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [editingLeave, setEditingLeave] = useState<LeavePeriod | null>(null)
@@ -467,8 +468,37 @@ function App() {
 
   function openShiftFor(target: Profile, date: Date) {
     const startDate = toIsoDate(date)
+    setEditingShift(null)
     setShiftForm({ ...EMPTY_SHIFT, profile_id: target.id, start_date: startDate, end_date: addIsoDays(startDate, 1) })
     setShiftOpen(true)
+  }
+
+  function editShift(shift: Shift) {
+    setEditingShift(shift)
+    setShiftForm({
+      profile_id: shift.profile_id,
+      shift_type: shift.shift_type,
+      start_date: shift.start_date,
+      end_date: shift.end_date,
+      start_time: shift.start_time.slice(0, 5),
+      end_time: shift.end_time.slice(0, 5),
+    })
+    setShiftOpen(true)
+  }
+
+  async function deleteShift(shift: Shift): Promise<boolean> {
+    if (!window.confirm(`Delete ${shift.shift_type === 'duty' ? 'Duty' : 'Stand By'} for ${shift.profile?.username || 'this employee'} on ${shift.start_date}?`)) return false
+    setMessage('')
+    const previous = shifts
+    setShifts((current) => current.filter((item) => item.id !== shift.id))
+    const { error } = await supabase.from('shifts').delete().eq('id', shift.id)
+    if (error) {
+      setShifts(previous)
+      setMessage(error.message || 'Could not delete Duty / Stand By.')
+      return false
+    }
+    setMessage(`${shift.shift_type === 'duty' ? 'Duty' : 'Stand By'} deleted.`)
+    return true
   }
 
   async function saveShift(event: FormEvent) {
@@ -482,30 +512,40 @@ function App() {
         end_date: addIsoDays(shiftForm.start_date, 1),
         start_time: shiftForm.start_time || '07:30',
         end_time: shiftForm.end_time || '07:30',
-        created_by: profile.id,
       }
 
-      // Check first so the user gets a readable message. The database unique
-      // constraint remains the final protection against concurrent inserts.
-      const { data: existing, error: checkError } = await supabase
+      let checkQuery = supabase
         .from('shifts')
         .select('id, shift_type')
         .eq('profile_id', normalizedShift.profile_id)
         .eq('start_date', normalizedShift.start_date)
-        .maybeSingle()
+      if (editingShift) checkQuery = checkQuery.neq('id', editingShift.id)
+      const { data: existing, error: checkError } = await checkQuery.maybeSingle()
       if (checkError) throw checkError
       if (existing) {
         throw new Error(`This employee already has ${existing.shift_type === 'duty' ? 'Duty' : 'Stand By'} on this date.`)
       }
 
-      const { error } = await supabase.from('shifts').insert(normalizedShift)
-      if (error) {
-        if (error.code === '23505') throw new Error('This employee already has Duty or Stand By starting on this date.')
-        throw error
+      if (editingShift) {
+        const { error } = await supabase
+          .from('shifts')
+          .update(normalizedShift)
+          .eq('id', editingShift.id)
+        if (error) {
+          if (error.code === '23505') throw new Error('This employee already has Duty or Stand By starting on this date.')
+          throw error
+        }
+      } else {
+        const { error } = await supabase.from('shifts').insert({ ...normalizedShift, created_by: profile.id })
+        if (error) {
+          if (error.code === '23505') throw new Error('This employee already has Duty or Stand By starting on this date.')
+          throw error
+        }
       }
       await loadShifts()
       setShiftOpen(false)
-      setMessage(`${shiftForm.shift_type === 'duty' ? 'Duty' : 'Stand By'} saved.`)
+      setEditingShift(null)
+      setMessage(`${shiftForm.shift_type === 'duty' ? 'Duty' : 'Stand By'} ${editingShift ? 'updated' : 'saved'}.`)
     } catch (error: any) {
       setMessage(error.message || 'Could not save Duty / Stand By.')
     } finally {
@@ -905,6 +945,8 @@ function App() {
             weekStart={weekStart}
             onAssign={openNewFor}
             onAddShift={openShiftFor}
+            onEditShift={editShift}
+            onDeleteShift={deleteShift}
             onEdit={openEdit}
           />
         )}
@@ -959,7 +1001,7 @@ function App() {
         />
       )}
 
-      {shiftOpen && <ShiftModal form={shiftForm} setForm={setShiftForm} profiles={profiles} onClose={() => setShiftOpen(false)} onSubmit={saveShift} saving={saving} />}
+      {shiftOpen && <ShiftModal form={shiftForm} setForm={setShiftForm} profiles={profiles} editing={Boolean(editingShift)} onClose={() => { setShiftOpen(false); setEditingShift(null) }} onSubmit={saveShift} saving={saving} />}
 
       {leaveOpen && <LeaveModal form={leaveForm} setForm={setLeaveForm} profiles={profiles} editing={Boolean(editingLeave)} onClose={() => { setLeaveOpen(false); setEditingLeave(null) }} onSubmit={saveLeave} saving={saving} />}
     </div>
@@ -1509,17 +1551,18 @@ function TaskModal({
 
 
 
-function ShiftModal({ form, setForm, profiles, onClose, onSubmit, saving }: {
+function ShiftModal({ form, setForm, profiles, editing, onClose, onSubmit, saving }: {
   form: ShiftFormData
   setForm: (next: ShiftFormData) => void
   profiles: Profile[]
+  editing: boolean
   onClose: () => void
   onSubmit: (event: FormEvent) => void
   saving: boolean
 }) {
   return <div className="modal-backdrop">
     <form className="task-modal shift-modal" onSubmit={onSubmit}>
-      <header><div><h2>Add Duty / Stand By</h2><p>The shift is assigned to its start date and ends automatically the next day.</p></div><button type="button" onClick={onClose}><X /></button></header>
+      <header><div><h2>{editing ? 'Edit Duty / Stand By' : 'Add Duty / Stand By'}</h2><p>The shift is assigned to its start date and ends automatically the next day.</p></div><button type="button" onClick={onClose}><X /></button></header>
       <label>Employee<select value={form.profile_id} onChange={(e) => setForm({ ...form, profile_id: e.target.value })} required>
         <option value="">Select employee</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.username}</option>)}
       </select></label>
@@ -1533,7 +1576,7 @@ function ShiftModal({ form, setForm, profiles, onClose, onSubmit, saving }: {
         <label>End Date<input type="date" value={form.end_date} disabled /></label>
         <label>End Time *<input type="time" value={form.end_time} onChange={(e) => setForm({ ...form, end_time:e.target.value })} required /></label>
       </div>
-      <footer><button type="button" className="secondary-button" onClick={onClose} disabled={saving}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Save shift'}</button></footer>
+      <footer><button type="button" className="secondary-button" onClick={onClose} disabled={saving}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Save shift'}</button></footer>
     </form>
   </div>
 }
@@ -1558,6 +1601,8 @@ function PlanningBoard({
   weekStart,
   onAssign,
   onAddShift,
+  onEditShift,
+  onDeleteShift,
   onEdit,
 }: {
   profiles: Profile[]
@@ -1567,11 +1612,22 @@ function PlanningBoard({
   weekStart: Date
   onAssign: (profile: Profile, date: Date) => void
   onAddShift: (profile: Profile, date: Date) => void
+  onEditShift: (shift: Shift) => void
+  onDeleteShift: (shift: Shift) => Promise<boolean>
   onEdit: (task: Task) => void
 }) {
   const [selected, setSelected] = useState<BoardCell | null>(null)
+  const [boardMode, setBoardMode] = useState<'week' | 'day'>('week')
   const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index))
+  const todayIso = toIsoDate(new Date())
+  const todayIndex = days.findIndex((date) => toIsoDate(date) === todayIso)
+  const [focusDayIndex, setFocusDayIndex] = useState(todayIndex >= 0 ? todayIndex : 0)
   const orderedProfiles = [...profiles].sort((a, b) => Number(a.username.split('-')[1]) - Number(b.username.split('-')[1]))
+
+  useEffect(() => {
+    const index = days.findIndex((date) => toIsoDate(date) === toIsoDate(new Date()))
+    setFocusDayIndex(index >= 0 ? index : 0)
+  }, [toIsoDate(weekStart)])
 
   function belongsTo(task: Task, profileId: string) {
     return task.owner_id === profileId || Boolean(task.assignees?.some((item) => item.id === profileId))
@@ -1583,97 +1639,116 @@ function PlanningBoard({
       profile: person,
       date,
       tasks: tasks.filter((task) => belongsTo(task, person.id) && (task.task_kind || 'task') === 'task' && taskOccursOnDate(task, iso) && !['cancelled'].includes(task.status)),
-      // A 24-hour shift belongs to the day on which it starts.
-      // Showing it again on the end date caused two consecutive shifts to look
-      // like a Duty/Stand By conflict in the same Board cell.
       shifts: shifts.filter((shift) => shift.profile_id === person.id && shift.start_date === iso),
       leave: leaves.find((leave) => leave.profile_id === person.id && leave.start_date <= iso && leave.end_date >= iso) || null,
     }
   }
 
+  function activeTaskCount(cell: BoardCell) {
+    return cell.tasks.filter((task) => task.status !== 'completed' && task.status !== 'cancelled').length
+  }
+
   function cellClass(cell: BoardCell) {
-    const normalCount = cell.tasks.filter((task) => (task.task_kind || 'task') === 'task' && task.status !== 'completed').length
+    const count = activeTaskCount(cell)
     if (cell.leave) return 'board-cell is-leave'
-    if (normalCount >= 5) return 'board-cell load-high'
-    if (normalCount >= 3) return 'board-cell load-medium'
-    if (normalCount >= 1) return 'board-cell load-low'
+    if (count >= 5) return 'board-cell load-high'
+    if (count >= 3) return 'board-cell load-medium'
+    if (count >= 1) return 'board-cell load-low'
     return 'board-cell is-free'
   }
 
   function CellContent({ cell }: { cell: BoardCell }) {
-    const duty = cell.shifts.some((shift) => shift.shift_type === 'duty')
-    const standby = cell.shifts.some((shift) => shift.shift_type === 'standby')
-    const normal = cell.tasks.filter((task) => (task.task_kind || 'task') === 'task' && task.status !== 'cancelled')
-    return <>
-      <span className="board-icons" aria-label={`${cell.profile.username} ${toIsoDate(cell.date)}`}>
-        {cell.leave && <span title="Leave">🟥</span>}
-        {!cell.leave && duty && <span title="Duty">🟦</span>}
-        {!cell.leave && standby && <span title="Stand By">🟪</span>}
-        {normal.slice(0, 4).map((task) => <span key={task.id} title={task.title}>📋</span>)}
-        {normal.length > 4 && <small>+{normal.length - 4}</small>}
-        {!cell.leave && !duty && !standby && normal.length === 0 && <span className="free-mark">—</span>}
-      </span>
-    </>
+    const shift = cell.shifts[0]
+    const normal = cell.tasks.filter((task) => task.status !== 'cancelled')
+    return <span className="board-icons" aria-label={`${cell.profile.username} ${toIsoDate(cell.date)}`}>
+      {cell.leave ? <span title="Leave">🟥</span> : shift ? <span title={shift.shift_type === 'duty' ? 'Duty' : 'Stand By'}>{shift.shift_type === 'duty' ? '🟦' : '🟪'}</span> : null}
+      {!cell.leave && normal.slice(0, 2).map((task) => <span key={task.id} title={task.title}>📋</span>)}
+      {!cell.leave && normal.length > 2 && <small>+{normal.length - 2}</small>}
+      {!cell.leave && !shift && normal.length === 0 && <span className="free-dot" title="Free">●</span>}
+    </span>
   }
 
+  function weeklyCount(person: Profile) {
+    return new Set(days.flatMap((date) => cellFor(person, date).tasks.map((task) => task.id))).size
+  }
+
+  function openDay(index: number) {
+    setFocusDayIndex(index)
+    setBoardMode('day')
+  }
+
+  const focusedDate = days[focusDayIndex]
+  const focusedCells = orderedProfiles.map((person) => cellFor(person, focusedDate))
+
   return <section className="planning-board" aria-label="Weekly planning board">
+    <div className="board-toolbar">
+      <div className="board-mode-switch" aria-label="Board view">
+        <button type="button" className={boardMode === 'week' ? 'active' : ''} onClick={() => setBoardMode('week')}>Week</button>
+        <button type="button" className={boardMode === 'day' ? 'active' : ''} onClick={() => setBoardMode('day')}>Day Focus</button>
+      </div>
+      {boardMode === 'day' && <button type="button" className="board-back-week" onClick={() => setBoardMode('week')}><ChevronLeft size={16} /> Week</button>}
+    </div>
+
     <div className="board-legend" aria-label="Board legend">
       <strong>Legend</strong>
-      <span>🟦 Duty</span>
-      <span>🟪 Stand By</span>
-      <span>🟥 Leave</span>
-      <span>📋 Task</span>
-      <span>— Free</span>
+      <span>🟦 Duty</span><span>🟪 Stand By</span><span>🟥 Leave</span><span>📋 Task</span><span><b className="legend-free-dot">●</b> Free</span>
     </div>
-    <p className="board-help">Tap a cell to see the day and assign a task. The employee column and day header stay visible while scrolling.</p>
-    <div className="board-scroll">
-      <div className="board-grid" style={{ gridTemplateColumns: `76px repeat(7, minmax(58px, 1fr)) 48px` }}>
-        <div className="board-corner">IMP</div>
-        {days.map((date) => <div className={`board-day ${isSameDay(date, new Date()) ? 'is-today' : ''}`} key={toIsoDate(date)}>
-          <strong>{date.toLocaleDateString('en-GB', { weekday: 'short' })}</strong>
-          <small>{date.getDate()}</small>
-        </div>)}
-        <div className="board-total-head">Σ</div>
 
-        {orderedProfiles.map((person) => {
-          const cells = days.map((date) => cellFor(person, date))
-          const weeklyNormalTasks = new Set(cells.flatMap((cell) => cell.tasks.filter((task) => (task.task_kind || 'task') === 'task').map((task) => task.id))).size
-          return <div className="board-row-contents" key={person.id} style={{ display: 'contents' }}>
-            <div className="board-person">{person.username}</div>
-            {cells.map((cell) => <button
-              type="button"
-              className={cellClass(cell)}
-              key={`${person.id}-${toIsoDate(cell.date)}`}
-              onClick={() => setSelected(cell)}
-              aria-label={`Open ${person.username}, ${formatLongDay(cell.date)}`}
-            ><CellContent cell={cell} /></button>)}
-            <div className="board-total">{weeklyNormalTasks}</div>
-          </div>
+    {boardMode === 'week' ? <>
+      <p className="board-help">Full-week overview. Tap a day header for a clearer day view, or tap any cell for details and quick assignment.</p>
+      <div className="board-week-wrap">
+        <div className="board-grid board-grid-compact" style={{ gridTemplateColumns: `66px repeat(7, minmax(0, 1fr))` }}>
+          <div className="board-corner">IMP</div>
+          {days.map((date, index) => <button type="button" className={`board-day ${isSameDay(date, new Date()) ? 'is-today' : ''}`} key={toIsoDate(date)} onClick={() => openDay(index)}>
+            <strong>{date.toLocaleDateString('en-GB', { weekday: 'narrow' })}</strong><small>{date.getDate()}</small>
+          </button>)}
+          {orderedProfiles.map((person, rowIndex) => {
+            const cells = days.map((date) => cellFor(person, date))
+            return <div className="board-row-contents" key={person.id} style={{ display: 'contents' }}>
+              <div className={`board-person ${rowIndex % 2 ? 'is-alt' : ''}`}><span>{person.username}</span><small>{weeklyCount(person)}</small></div>
+              {cells.map((cell) => <button type="button" className={`${cellClass(cell)} ${rowIndex % 2 ? 'is-alt-row' : ''} ${isSameDay(cell.date, new Date()) ? 'is-today-col' : ''}`} key={`${person.id}-${toIsoDate(cell.date)}`} onClick={() => setSelected(cell)} aria-label={`Open ${person.username}, ${formatLongDay(cell.date)}`}><CellContent cell={cell} /></button>)}
+            </div>
+          })}
+        </div>
+      </div>
+    </> : <>
+      <div className="board-day-picker" aria-label="Select day">
+        {days.map((date, index) => <button type="button" className={`${focusDayIndex === index ? 'active' : ''} ${isSameDay(date, new Date()) ? 'is-today' : ''}`} key={toIsoDate(date)} onClick={() => setFocusDayIndex(index)}>
+          <span>{date.toLocaleDateString('en-GB', { weekday: 'short' })}</span><strong>{date.getDate()}</strong>
+        </button>)}
+      </div>
+      <div className="board-focus-heading"><div><span>DAY FOCUS</span><h3>{formatLongDay(focusedDate)}</h3></div><small>Tap a person to assign or review</small></div>
+      <div className="board-focus-list">
+        {focusedCells.map((cell) => {
+          const shift = cell.shifts[0]
+          const count = activeTaskCount(cell)
+          const status = cell.leave ? `🟥 ${LEAVE_LABELS[cell.leave.leave_type]}` : shift ? `${shift.shift_type === 'duty' ? '🟦 Duty' : '🟪 Stand By'}` : count === 0 ? 'Free' : `${count} active task${count === 1 ? '' : 's'}`
+          return <button type="button" key={cell.profile.id} className={`board-focus-row ${cell.leave ? 'is-leave' : count === 0 && !shift ? 'is-free' : ''}`} onClick={() => setSelected(cell)}>
+            <strong>{cell.profile.username}</strong>
+            <span className="board-focus-status">{status}</span>
+            <span className="board-focus-count">{cell.tasks.length ? `${cell.tasks.length} 📋` : ''}</span>
+            <ChevronRight size={18} />
+          </button>
         })}
       </div>
-    </div>
+    </>}
 
     {selected && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null) }}>
       <section className="task-modal board-detail-modal">
-        <header>
-          <div><h2>{selected.profile.username}</h2><p>{formatLongDay(selected.date)}</p></div>
-          <button type="button" onClick={() => setSelected(null)}><X /></button>
-        </header>
+        <header><div><h2>{selected.profile.username}</h2><p>{formatLongDay(selected.date)}</p></div><button type="button" onClick={() => setSelected(null)}><X /></button></header>
         {selected.leave && <div className="board-detail-status leave-status">🟥 {LEAVE_LABELS[selected.leave.leave_type]}</div>}
-        {selected.shifts.map((shift) => <div className="shift-detail" key={shift.id}>
+        {selected.shifts.map((shift) => <div className="shift-detail shift-detail-managed" key={shift.id}>
           <span>{shift.shift_type === 'duty' ? '🟦' : '🟪'}</span>
           <div><strong>{shift.shift_type === 'duty' ? 'Duty' : 'Stand By'}</strong><small>{shift.start_date} {shift.start_time.slice(0,5)} → {shift.end_date} {shift.end_time.slice(0,5)}</small></div>
+          <div className="shift-detail-actions">
+            <button type="button" className="icon-action" aria-label="Edit shift" onClick={() => { setSelected(null); onEditShift(shift) }}><Pencil size={16} /></button>
+            <button type="button" className="icon-action danger" aria-label="Delete shift" onClick={async () => { const deleted = await onDeleteShift(shift); if (deleted) setSelected((current) => current ? { ...current, shifts: current.shifts.filter((item) => item.id !== shift.id) } : current) }}><Trash2 size={16} /></button>
+          </div>
         </div>)}
-        {selected.tasks.length ? <div className="board-detail-list">
-          {selected.tasks.map((task) => <button type="button" key={task.id} onClick={() => { setSelected(null); onEdit(task) }}>
-            <span>📋</span>
-            <div><strong>{task.title}</strong><small>{formatTaskTime(task, toIsoDate(selected.date))}</small></div>
-            <ChevronRight size={18} />
-          </button>)}
-        </div> : selected.shifts.length ? null : <div className="empty-state compact-empty">No entries for this day.</div>}
+        {selected.tasks.length ? <div className="board-detail-list">{selected.tasks.map((task) => <button type="button" key={task.id} onClick={() => { setSelected(null); onEdit(task) }}><span>📋</span><div><strong>{task.title}</strong><small>{formatTaskTime(task, toIsoDate(selected.date))}</small></div><ChevronRight size={18} /></button>)}</div> : selected.shifts.length ? null : <div className="empty-state compact-empty">No entries for this day.</div>}
         <footer className="board-action-footer">
           <button className="primary-button" type="button" onClick={() => { const { profile, date } = selected; setSelected(null); onAssign(profile, date) }}><Plus size={18} /> Add task</button>
-          <button className="secondary-button" type="button" onClick={() => { const { profile, date } = selected; setSelected(null); onAddShift(profile, date) }}><Clock3 size={18} /> Add Duty / Stand By</button>
+          {!selected.leave && selected.shifts.length === 0 && <button className="secondary-button" type="button" onClick={() => { const { profile, date } = selected; setSelected(null); onAddShift(profile, date) }}><Clock3 size={18} /> Add Duty / Stand By</button>}
         </footer>
       </section>
     </div>}
