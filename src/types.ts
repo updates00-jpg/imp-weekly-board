@@ -27,6 +27,7 @@ export interface Task {
   updated_at: string
   deleted_at: string | null
   image_path: string | null
+  image_paths: string[] | null
   owner?: Profile | null
   assignees?: Profile[]
 }

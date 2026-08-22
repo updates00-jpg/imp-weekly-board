@@ -639,3 +639,16 @@ legend { font-weight: 900; padding: 0 7px; }
 @media (max-width: 360px) {
   .team-day-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+
+/* v2.10: up to three photos per task */
+.task-photo-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 9px 0 11px; }
+.task-photo-gallery .task-photo, .task-photo-gallery .task-photo-placeholder { width: 100%; height: 104px; margin: 0; border-radius: 10px; object-fit: cover; }
+.task-photo-gallery.compact .task-photo, .task-photo-gallery.compact .task-photo-placeholder { height: 70px; margin: 0; }
+.task-photo-editor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.task-photo-editor-item { position: relative; min-width: 0; }
+.task-photo-editor-item .task-photo, .task-photo-editor-item .task-photo-editor-preview, .task-photo-editor-item .task-photo-placeholder { width: 100%; height: 112px; margin: 0; object-fit: cover; border-radius: 11px; }
+.photo-item-remove { position: absolute; top: 5px; right: 5px; width: 30px; height: 30px; border: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(15,23,42,.82); color: white; box-shadow: 0 2px 7px rgba(15,23,42,.25); }
+.photo-picker-button.disabled { opacity: .42; cursor: not-allowed; }
+.photo-picker-button.disabled input { pointer-events: none; }
+@media (max-width: 340px) { .task-photo-gallery, .task-photo-editor-grid { gap: 5px; } .task-photo-editor-item .task-photo, .task-photo-editor-item .task-photo-editor-preview { height: 92px; } }
